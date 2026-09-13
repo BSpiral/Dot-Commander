@@ -102,6 +102,24 @@ class PiratesVoyage extends Simulation {
     return reward;
   }
 
+  /// Grants a free Common Chest roll earned by watching a rewarded ad
+  /// (see RewardedChestService), instead of spending gems. Callers must
+  /// only call this after their own daily-allowance bookkeeping
+  /// (MonetizationStore.recordRewardedOpen) has already confirmed and
+  /// recorded the grant, exactly once per watched ad -- this method
+  /// itself does not re-check or persist any ad-side allowance; it is
+  /// the same deterministic roll as a paid Common Chest, just without a
+  /// gem cost.
+  EquipmentItem openRewardedChest(ChestCategory category, {Random? random}) {
+    final reward = progress.roll(
+      ChestKind.common,
+      random ?? rng,
+      category: category,
+    );
+    revision++;
+    return reward;
+  }
+
   bool equip(String id, ItemKind kind, String? itemId) {
     final c = progress.commands[id];
     if (c == null || busy(id)) return false;

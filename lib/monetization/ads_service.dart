@@ -4,7 +4,6 @@ import 'package:flutter/foundation.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 
 import 'monetization_ids.dart';
-import 'monetization_store.dart';
 
 /// One-time SDK bring-up. Safe to call more than once; the plugin itself
 /// no-ops a repeat initialize.
@@ -12,38 +11,44 @@ class AdsService {
   static Future<void> initialize() => MobileAds.instance.initialize();
 }
 
-enum RewardedWatchOutcome {
-  /// The user watched the whole ad and a reward was granted.
-  rewarded,
+enum RewardedShowResult {
+  /// The user watched the whole ad and the SDK confirmed the reward.
+  earned,
 
-  /// Today's rewarded-ad cap was already reached; no ad was shown.
-  capReached,
+  /// The ad was shown but closed/skipped before a reward was earned, or
+  /// it failed to show once summoned.
+  dismissedWithoutReward,
 
-  /// An ad was not available to show (still loading, or failed to load).
+  /// No ad was ready to show (still loading, or failed to load).
   notAvailable,
 
-  /// The ad was shown but closed/skipped before a reward was earned.
-  dismissedWithoutReward,
+  /// A rewarded ad is already being shown (only one can be on screen at
+  /// a time); this call did not start a second one.
+  busy,
 }
 
-/// Owns exactly one rewarded ad's lifecycle at a time: preload, show, and
-/// grant-on-earn. `watch()` is the only entry point that can lead to a
-/// reward, and it guarantees the reward is recorded at most once per
-/// completed ad view:
+/// Owns exactly one rewarded ad's lifecycle at a time: preload and show.
+/// This is a pure ad-mechanics primitive -- it knows nothing about gems,
+/// chests, or any other in-game reward; callers (e.g.
+/// RewardedChestService) decide what [RewardedShowResult.earned] means
+/// and are responsible for granting it exactly once.
+///
+/// [show] guarantees at most one reward-worthy result per completed ad
+/// view:
 ///  - the SDK invokes `onUserEarnedReward` at most once per shown ad,
-///  - the loaded ad instance is discarded the moment `show()` is called
+///  - the loaded ad instance is discarded the instant [show] is called
 ///    (it cannot be shown a second time), and
-///  - [MonetizationStore.recordRewardedAdGrant] independently enforces the
-///    daily cap as the final source of truth, so even a race between two
-///    `watch()` calls cannot grant more than the cap allows.
+///  - [_busy] refuses to start a second `show()` while one is already
+///    in flight (there can only ever be one fullscreen rewarded ad on
+///    screen at a time; a repeated tap or an app pause/resume racing a
+///    still-open ad cannot start a duplicate show).
 class RewardedAdController {
-  final MonetizationStore store;
   RewardedAd? _ad;
   bool _loading = false;
-  RewardedAdController({MonetizationStore? store})
-    : store = store ?? MonetizationStore();
+  bool _busy = false;
 
   bool get isReady => _ad != null;
+  bool get isBusy => _busy;
 
   Future<void> preload() async {
     if (_ad != null || _loading) return;
@@ -56,6 +61,15 @@ class RewardedAdController {
           onAdLoaded: (ad) => _ad = ad,
           onAdFailedToLoad: (error) {
             if (kDebugMode) debugPrint('Rewarded ad failed to load: $error');
+            // Load failures (including no-fill) grant nothing on their
+            // own -- watch() simply reports notAvailable while _ad stays
+            // null. Retry shortly so testers exercising failure/no-fill
+            // during Closed Beta still see ad supply recover, rather
+            // than a permanently dead rewarded slot for the rest of the
+            // session.
+            Future.delayed(const Duration(seconds: 30), () {
+              if (_ad == null && !_loading) unawaited(preload());
+            });
           },
         ),
       );
@@ -64,47 +78,44 @@ class RewardedAdController {
     }
   }
 
-  /// Shows the currently loaded ad (if any) and, only once the user has
-  /// actually earned the reward, records and returns how many gems to
-  /// grant. The caller is responsible for adding the returned gem count
-  /// to the player's persisted balance and saving -- this controller does
-  /// not touch game state directly, so it stays testable without a voyage.
-  Future<(RewardedWatchOutcome, int)> watch({
-    required int rewardGems,
-    required int dailyCap,
-  }) async {
-    if (await store.rewardedAdsRemainingToday(dailyCap) <= 0) {
-      return (RewardedWatchOutcome.capReached, 0);
-    }
+  /// Shows the currently loaded ad (if any). Returns
+  /// [RewardedShowResult.earned] only once the SDK has actually
+  /// confirmed the user earned the reward -- the caller must not grant
+  /// anything until it sees that value, and must grant it at most once
+  /// per call to [show].
+  Future<RewardedShowResult> show() async {
+    if (_busy) return RewardedShowResult.busy;
     final ad = _ad;
-    if (ad == null) return (RewardedWatchOutcome.notAvailable, 0);
+    if (ad == null) return RewardedShowResult.notAvailable;
+    _busy = true;
     _ad = null; // Discard immediately: an ad instance can only show once.
-
-    var earned = false;
-    final dismissed = Completer<void>();
-    ad.fullScreenContentCallback = FullScreenContentCallback(
-      onAdDismissedFullScreenContent: (a) {
-        a.dispose();
-        if (!dismissed.isCompleted) dismissed.complete();
-      },
-      onAdFailedToShowFullScreenContent: (a, error) {
-        a.dispose();
-        if (!dismissed.isCompleted) dismissed.complete();
-      },
-    );
-    await ad.show(
-      onUserEarnedReward: (ad, reward) {
-        earned = true;
-      },
-    );
-    await dismissed.future;
-    // Kick off the next preload in the background so a subsequent watch
-    // (tomorrow, or after the cap resets) has an ad ready immediately.
-    unawaited(preload());
-    if (!earned) return (RewardedWatchOutcome.dismissedWithoutReward, 0);
-    final granted = await store.recordRewardedAdGrant(dailyCap);
-    return granted
-        ? (RewardedWatchOutcome.rewarded, rewardGems)
-        : (RewardedWatchOutcome.capReached, 0);
+    try {
+      var earned = false;
+      final dismissed = Completer<void>();
+      ad.fullScreenContentCallback = FullScreenContentCallback(
+        onAdDismissedFullScreenContent: (a) {
+          a.dispose();
+          if (!dismissed.isCompleted) dismissed.complete();
+        },
+        onAdFailedToShowFullScreenContent: (a, error) {
+          a.dispose();
+          if (!dismissed.isCompleted) dismissed.complete();
+        },
+      );
+      await ad.show(
+        onUserEarnedReward: (ad, reward) {
+          earned = true;
+        },
+      );
+      await dismissed.future;
+      // Kick off the next preload in the background so a subsequent
+      // watch has an ad ready immediately.
+      unawaited(preload());
+      return earned
+          ? RewardedShowResult.earned
+          : RewardedShowResult.dismissedWithoutReward;
+    } finally {
+      _busy = false;
+    }
   }
 }

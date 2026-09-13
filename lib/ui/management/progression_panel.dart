@@ -1,26 +1,26 @@
-import '../../monetization/ads_service.dart';
+import '../../monetization/rewarded_chest_service.dart';
 import '../../pirates/progression/life_balance.dart';
 import 'package:flutter/material.dart';
 import '../../pirates/progression/fleet_progress.dart';
 import '../../pirates/encounters/pirates_voyage.dart';
 import '../../core/simulation/vessel.dart';
-import 'watch_ad_tile.dart';
+import 'rewarded_chest_tile.dart';
 
 class ProgressionPanel extends StatelessWidget {
   final PiratesVoyage voyage;
   final Vessel ship;
   final int tab;
   final VoidCallback changed;
-  final RewardedAdController? rewardedAds;
-  final void Function(int gems)? onRewardedGems;
+  final RewardedChestService? rewardedChests;
+  final Future<void> Function(ChestCategory category)? onRewardedChestGranted;
   const ProgressionPanel({
     super.key,
     required this.voyage,
     required this.ship,
     required this.tab,
     required this.changed,
-    this.rewardedAds,
-    this.onRewardedGems,
+    this.rewardedChests,
+    this.onRewardedChestGranted,
   });
   @override
   Widget build(BuildContext context) {
@@ -67,16 +67,6 @@ class ProgressionPanel extends StatelessWidget {
           key: const Key('buy_slot'),
         ),
       );
-      if (rewardedAds != null && onRewardedGems != null) {
-        widgets.add(
-          WatchAdTile(
-            controller: rewardedAds!,
-            rewardGems: Balance.rewardedAdGems,
-            dailyCap: Balance.rewardedAdDailyCap,
-            onGranted: onRewardedGems!,
-          ),
-        );
-      }
       for (final category in ChestCategory.values) {
         for (final kind in ChestKind.values) {
           widgets.add(
@@ -101,6 +91,21 @@ class ProgressionPanel extends StatelessWidget {
               key: Key('chest_${category.name}_${kind.name}'),
             ),
           );
+          // Common Chests only: an additional, entirely voluntary way to
+          // open one -- watch a rewarded ad instead of spending gems.
+          // Each category has its own independent 5/day allowance (see
+          // RewardedChestService); Rare chests stay gem-only.
+          if (kind == ChestKind.common &&
+              rewardedChests != null &&
+              onRewardedChestGranted != null) {
+            widgets.add(
+              RewardedChestTile(
+                service: rewardedChests!,
+                category: category,
+                onGranted: onRewardedChestGranted!,
+              ),
+            );
+          }
         }
       }
       for (final id in p.lastRewards) {

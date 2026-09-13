@@ -1,6 +1,7 @@
-import '../../monetization/ads_service.dart';
 import '../../monetization/billing_service.dart';
+import '../../monetization/rewarded_chest_service.dart';
 import '../../pirates/encounters/pirates_voyage.dart';
+import '../../pirates/progression/fleet_progress.dart';
 import '../../pirates/ships/crew_representation.dart';
 import '../theater/battle_deck.dart';
 import 'package:flutter/foundation.dart';
@@ -28,9 +29,9 @@ class ManagementPanel extends StatelessWidget {
   final bool paused;
   final VoidCallback togglePause;
   final bool hasRemoveAds;
-  final RewardedAdController? rewardedAds;
+  final RewardedChestService? rewardedChests;
   final BillingService? billing;
-  final void Function(int gems)? onRewardedGems;
+  final Future<void> Function(ChestCategory category)? onRewardedChestGranted;
   const ManagementPanel({
     super.key,
     this.encounter,
@@ -47,9 +48,9 @@ class ManagementPanel extends StatelessWidget {
     required this.paused,
     required this.togglePause,
     this.hasRemoveAds = false,
-    this.rewardedAds,
+    this.rewardedChests,
     this.billing,
-    this.onRewardedGems,
+    this.onRewardedChestGranted,
   });
   @override
   Widget build(BuildContext context) {
@@ -67,8 +68,8 @@ class ManagementPanel extends StatelessWidget {
             ship: ship,
             tab: tab,
             changed: onChanged ?? () {},
-            rewardedAds: rewardedAds,
-            onRewardedGems: onRewardedGems,
+            rewardedChests: rewardedChests,
+            onRewardedChestGranted: onRewardedChestGranted,
           ),
       ],
       3 => [

@@ -78,12 +78,13 @@ abstract final class Balance {
       visitsPerGem = 5,
       offlineBaseMinutes = 240,
       offlineMaxMinutes = 480,
-      // Conservative, deliberately small: a rewarded ad is worth about the
-      // same as one combat win (see EncounterResult.resolve's gems: 1), and
-      // is capped per real-world day so it stays a voluntary top-up, never
-      // the dominant or a pay-to-win-adjacent source of gems.
-      rewardedAdGems = 2,
-      rewardedAdDailyCap = 3;
+      // Common Chests may also be opened by watching a rewarded ad, up to
+      // this many times per day PER CHEST TYPE (ChestCategory) -- five
+      // independent daily allowances, not one shared pool. This is the
+      // deliberate anti-farming control: watching ads cannot outpace or
+      // replace normal gem-earning progression, only supplement one
+      // category's worth of Common Chests per day per type.
+      rewardedChestDailyCap = 5;
   static int offlineCapMinutes(int level) =>
       offlineBaseMinutes +
       ((offlineMaxMinutes - offlineBaseMinutes) *

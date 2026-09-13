@@ -7,7 +7,9 @@ import '../monetization/ads_service.dart';
 import '../monetization/banner_ad_bar.dart';
 import '../monetization/billing_service.dart';
 import '../monetization/monetization_store.dart';
+import '../monetization/rewarded_chest_service.dart';
 import '../pirates/persistence/voyage_store.dart';
+import '../pirates/progression/fleet_progress.dart';
 import '../pirates/world/caribbean.dart';
 import '../pirates/visuals/pirates_game.dart';
 import 'management/management_panel.dart';
@@ -24,7 +26,9 @@ class _CommandScreenState extends State<CommandScreen>
   var simulation = createCaribbean();
   late final store = widget.store ?? VoyageStore();
   late final monetizationStore = MonetizationStore();
-  late final rewardedAdController = RewardedAdController(
+  late final rewardedAdController = RewardedAdController();
+  late final rewardedChestService = RewardedChestService(
+    ads: rewardedAdController,
     store: monetizationStore,
   );
   late final billingService = BillingService(store: monetizationStore);
@@ -86,18 +90,24 @@ class _CommandScreenState extends State<CommandScreen>
     });
   }
 
-  /// Grants gems earned from a watched rewarded ad. Called only from the
-  /// rewarded-ad completion path (see RewardedAdController.watch), after
-  /// the daily-cap-checked, exactly-once grant has already been recorded
-  /// in MonetizationStore -- this just applies it to the voyage balance
-  /// and saves, mirroring every other gem-earning path in this screen.
-  void _grantGems(int amount) {
-    if (amount <= 0) return;
-    setState(() {
-      simulation.gems += amount;
-      simulation.revision++;
-    });
+  /// Grants a free Common Chest roll earned by watching a rewarded ad.
+  /// Called only via RewardedChestTile, which only calls this after
+  /// RewardedChestService.watch has already reported
+  /// RewardedChestOutcome.granted -- meaning the SDK confirmed the
+  /// reward AND today's per-category allowance was atomically consumed
+  /// in MonetizationStore. There is no await between that confirmation
+  /// and this method's synchronous roll, so this is the single point
+  /// where the reward is actually materialized, exactly once.
+  Future<void> _grantRewardedChest(ChestCategory category) async {
+    final reward = simulation.openRewardedChest(category);
+    setState(() {});
     _save();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Received ${reward.name} (${reward.rarity})'),
+      ),
+    );
   }
 
   Future<void> _load() async {
@@ -514,9 +524,9 @@ class _CommandScreenState extends State<CommandScreen>
               }
             }),
             hasRemoveAds: hasRemoveAds,
-            rewardedAds: rewardedAdController,
+            rewardedChests: rewardedChestService,
             billing: billingService,
-            onRewardedGems: _grantGems,
+            onRewardedChestGranted: _grantRewardedChest,
           ),
         ),
       ],
