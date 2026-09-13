@@ -83,7 +83,13 @@ void main() {
           management.height /
               (management.height +
                   tester.getSize(find.byKey(const Key('living_map'))).height),
-          inInclusiveRange(.35, .40),
+          // Upper bound widened from .40: the permanent ad bar
+          // (BannerAdBar, monetization pass) reserves a fixed 56px strip
+          // below the map on portrait phones, which the living map cedes
+          // (management keeps its own designed height/ratio unchanged) --
+          // shifting this measured ratio up slightly without changing the
+          // management panel's actual on-screen size or usability.
+          inInclusiveRange(.35, .44),
         );
       }
       for (var i = 0; i < 5; i++) {

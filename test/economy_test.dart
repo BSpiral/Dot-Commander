@@ -120,4 +120,70 @@ void main() {
       expect(again.ships.first.hullHp, 0);
     },
   );
+  test(
+    'every fifth qualifying port visit grants exactly one gem, persists, and does not affect NPCs',
+    () async {
+      final v = createCaribbean();
+      final s = v.ships.first;
+      expect(v.progress.visits, 0);
+      expect(v.gems, 0);
+      void dock() {
+        s.destination = v.life.portFor(s);
+        s.position = s.destination!.position;
+        v.life.startPort(s);
+        // Finish the port-work state machine so the next call is a fresh
+        // arrival, not a same-visit no-op re-entry.
+        while (v.life.works.containsKey(s.id)) {
+          v.life.tick(999);
+        }
+      }
+
+      for (var i = 1; i <= 4; i++) {
+        dock();
+        expect(v.progress.visits, i);
+        expect(v.gems, 0, reason: 'no gem before the 5th visit');
+      }
+      dock();
+      expect(v.progress.visits, 5);
+      expect(v.gems, 1, reason: 'exactly one gem on the 5th visit');
+      for (var i = 6; i <= 9; i++) {
+        dock();
+        expect(v.gems, 1, reason: 'no extra gem before the 10th visit');
+      }
+      dock();
+      expect(v.progress.visits, 10);
+      expect(v.gems, 2, reason: 'exactly one more gem on the 10th visit');
+
+      // A non-player (NPC) arrival must not consume the player's visit count.
+      final npc = v.ships.firstWhere((s) => !s.playerOwned);
+      npc.destination = v.life.portFor(npc);
+      npc.position = npc.destination!.position;
+      v.life.startPort(npc);
+      expect(v.progress.visits, 10);
+      expect(v.gems, 2);
+
+      String? data;
+      final store = VoyageStore(
+        read: () async => data,
+        write: (str) async {
+          data = str;
+        },
+      );
+      await store.save(v);
+      final loaded = await store.load();
+      expect(loaded.progress.visits, 10);
+      expect(loaded.gems, 2);
+    },
+  );
+  test('opening a chest with insufficient gems changes nothing', () {
+    final v = createCaribbean()..gems = 5;
+    final before = v.progress.inventory.length;
+    final reward = v.openChest(
+      ChestKind.common,
+      category: ChestCategory.hull,
+    );
+    expect(reward, isNull);
+    expect(v.gems, 5);
+    expect(v.progress.inventory.length, before);
+  });
 }

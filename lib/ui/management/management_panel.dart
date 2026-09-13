@@ -1,3 +1,5 @@
+import '../../monetization/ads_service.dart';
+import '../../monetization/billing_service.dart';
 import '../../pirates/encounters/pirates_voyage.dart';
 import '../../pirates/ships/crew_representation.dart';
 import '../theater/battle_deck.dart';
@@ -7,6 +9,7 @@ import 'package:flutter/material.dart';
 import '../../core/simulation/vessel.dart';
 import '../../pirates/ships/hull_catalog.dart';
 import 'progression_panel.dart';
+import 'remove_ads_tile.dart';
 
 const managementLabels = ['Shop', 'Tree', 'Upgrades', 'Deck', 'Settings'];
 
@@ -24,6 +27,10 @@ class ManagementPanel extends StatelessWidget {
   final String? saveError;
   final bool paused;
   final VoidCallback togglePause;
+  final bool hasRemoveAds;
+  final RewardedAdController? rewardedAds;
+  final BillingService? billing;
+  final void Function(int gems)? onRewardedGems;
   const ManagementPanel({
     super.key,
     this.encounter,
@@ -39,6 +46,10 @@ class ManagementPanel extends StatelessWidget {
     required this.saveError,
     required this.paused,
     required this.togglePause,
+    this.hasRemoveAds = false,
+    this.rewardedAds,
+    this.billing,
+    this.onRewardedGems,
   });
   @override
   Widget build(BuildContext context) {
@@ -56,6 +67,8 @@ class ManagementPanel extends StatelessWidget {
             ship: ship,
             tab: tab,
             changed: onChanged ?? () {},
+            rewardedAds: rewardedAds,
+            onRewardedGems: onRewardedGems,
           ),
       ],
       3 => [
@@ -157,6 +170,7 @@ class ManagementPanel extends StatelessWidget {
           saveError ??
               'Saved every five seconds. Current offline cap: ${voyage?.progress.offlineCapLabel ?? '4h 0m'}. Battles do not simulate offline.',
         ),
+        if (billing != null) RemoveAdsTile(billing: billing!, owned: hasRemoveAds),
         note(
           Icons.info_outline,
           'Dot Commander: Pirates',

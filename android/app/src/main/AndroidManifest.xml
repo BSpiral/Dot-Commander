@@ -1,8 +1,22 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Required for ad requests and Play Billing network calls. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <application
         android:label="Dot Commander: Pirates"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
+        <!--
+          AdMob App ID. This is Google's published TEST App ID
+          (https://developers.google.com/admob/android/test-ads), safe for
+          Closed testing: it only ever serves clearly-labeled test ad
+          creatives. Replace with this app's real AdMob App ID from your
+          own AdMob console (Apps > App settings > App ID) before
+          promoting past Closed testing; see lib/monetization/monetization_ids.dart
+          for the matching ad-unit-ID placeholders.
+        -->
+        <meta-data
+            android:name="com.google.android.gms.ads.APPLICATION_ID"
+            android:value="ca-app-pub-3940256099942544~3347511713"/>
         <activity
             android:name=".MainActivity"
             android:exported="true"

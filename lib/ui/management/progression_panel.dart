@@ -1,20 +1,26 @@
+import '../../monetization/ads_service.dart';
 import '../../pirates/progression/life_balance.dart';
 import 'package:flutter/material.dart';
 import '../../pirates/progression/fleet_progress.dart';
 import '../../pirates/encounters/pirates_voyage.dart';
 import '../../core/simulation/vessel.dart';
+import 'watch_ad_tile.dart';
 
 class ProgressionPanel extends StatelessWidget {
   final PiratesVoyage voyage;
   final Vessel ship;
   final int tab;
   final VoidCallback changed;
+  final RewardedAdController? rewardedAds;
+  final void Function(int gems)? onRewardedGems;
   const ProgressionPanel({
     super.key,
     required this.voyage,
     required this.ship,
     required this.tab,
     required this.changed,
+    this.rewardedAds,
+    this.onRewardedGems,
   });
   @override
   Widget build(BuildContext context) {
@@ -61,6 +67,16 @@ class ProgressionPanel extends StatelessWidget {
           key: const Key('buy_slot'),
         ),
       );
+      if (rewardedAds != null && onRewardedGems != null) {
+        widgets.add(
+          WatchAdTile(
+            controller: rewardedAds!,
+            rewardGems: Balance.rewardedAdGems,
+            dailyCap: Balance.rewardedAdDailyCap,
+            onGranted: onRewardedGems!,
+          ),
+        );
+      }
       for (final category in ChestCategory.values) {
         for (final kind in ChestKind.values) {
           widgets.add(

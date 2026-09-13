@@ -3,6 +3,10 @@ import 'package:flame/game.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../core/simulation/vessel.dart';
+import '../monetization/ads_service.dart';
+import '../monetization/banner_ad_bar.dart';
+import '../monetization/billing_service.dart';
+import '../monetization/monetization_store.dart';
 import '../pirates/persistence/voyage_store.dart';
 import '../pirates/world/caribbean.dart';
 import '../pirates/visuals/pirates_game.dart';
@@ -19,12 +23,18 @@ class _CommandScreenState extends State<CommandScreen>
     with WidgetsBindingObserver {
   var simulation = createCaribbean();
   late final store = widget.store ?? VoyageStore();
-  bool ready = false, canSave = false, paused = false;
+  late final monetizationStore = MonetizationStore();
+  late final rewardedAdController = RewardedAdController(
+    store: monetizationStore,
+  );
+  late final billingService = BillingService(store: monetizationStore);
+  bool ready = false, canSave = false, paused = false, hasRemoveAds = false;
   int tab = 3;
   int savedRevision = 0;
   String? shownBattle;
   String? saveError;
   Timer? saveTimer, timer;
+  StreamSubscription<bool>? _entitlementSub;
   final _gameKey = GlobalKey();
   late Vessel selected = simulation.ships.firstWhere((s) => s.playerOwned);
   late final PiratesGame game = PiratesGame(
@@ -36,6 +46,7 @@ class _CommandScreenState extends State<CommandScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _load();
+    _loadMonetization();
     timer = Timer.periodic(const Duration(milliseconds: 250), (_) {
       if (mounted && ready) {
         final run = simulation.encounterFor(selected.id);
@@ -60,7 +71,33 @@ class _CommandScreenState extends State<CommandScreen>
     saveTimer?.cancel();
     _save();
     timer?.cancel();
+    _entitlementSub?.cancel();
+    billingService.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadMonetization() async {
+    final owned = await monetizationStore.hasRemoveAds();
+    if (mounted) setState(() => hasRemoveAds = owned);
+    unawaited(rewardedAdController.preload());
+    unawaited(billingService.start());
+    _entitlementSub = billingService.entitlementGranted.listen((_) {
+      if (mounted) setState(() => hasRemoveAds = true);
+    });
+  }
+
+  /// Grants gems earned from a watched rewarded ad. Called only from the
+  /// rewarded-ad completion path (see RewardedAdController.watch), after
+  /// the daily-cap-checked, exactly-once grant has already been recorded
+  /// in MonetizationStore -- this just applies it to the voyage balance
+  /// and saves, mirroring every other gem-earning path in this screen.
+  void _grantGems(int amount) {
+    if (amount <= 0) return;
+    setState(() {
+      simulation.gems += amount;
+      simulation.revision++;
+    });
+    _save();
   }
 
   Future<void> _load() async {
@@ -476,6 +513,10 @@ class _CommandScreenState extends State<CommandScreen>
                 game.resumeEngine();
               }
             }),
+            hasRemoveAds: hasRemoveAds,
+            rewardedAds: rewardedAdController,
+            billing: billingService,
+            onRewardedGems: _grantGems,
           ),
         ),
       ],
@@ -575,6 +616,7 @@ class _CommandScreenState extends State<CommandScreen>
                               ],
                             ),
                     ),
+                    BannerAdBar(showAds: !hasRemoveAds),
                   ],
                 );
               },

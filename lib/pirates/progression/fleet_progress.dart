@@ -77,7 +77,13 @@ abstract final class Balance {
       searchCoins = 1,
       visitsPerGem = 5,
       offlineBaseMinutes = 240,
-      offlineMaxMinutes = 480;
+      offlineMaxMinutes = 480,
+      // Conservative, deliberately small: a rewarded ad is worth about the
+      // same as one combat win (see EncounterResult.resolve's gems: 1), and
+      // is capped per real-world day so it stays a voluntary top-up, never
+      // the dominant or a pay-to-win-adjacent source of gems.
+      rewardedAdGems = 2,
+      rewardedAdDailyCap = 3;
   static int offlineCapMinutes(int level) =>
       offlineBaseMinutes +
       ((offlineMaxMinutes - offlineBaseMinutes) *

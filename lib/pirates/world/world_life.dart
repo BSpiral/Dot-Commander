@@ -208,6 +208,13 @@ class WorldLife {
       log(s, 'Departed world at ${s.destination?.name}');
       return;
     }
+    if (s.playerOwned) {
+      v.progress.visits++;
+      if (v.progress.visits % Balance.visitsPerGem == 0) {
+        v.gems++;
+        log(s, 'Loyal-visit bonus: +1 gem');
+      }
+    }
     final port = (bonus(s, CommandTrack.portRelations) + s.economyBonus).clamp(
           0,
           .35,
