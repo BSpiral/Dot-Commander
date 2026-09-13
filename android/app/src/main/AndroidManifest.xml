@@ -6,17 +6,15 @@
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <!--
-          AdMob App ID. This is Google's published TEST App ID
-          (https://developers.google.com/admob/android/test-ads), safe for
-          Closed testing: it only ever serves clearly-labeled test ad
-          creatives. Replace with this app's real AdMob App ID from your
-          own AdMob console (Apps > App settings > App ID) before
-          promoting past Closed testing; see lib/monetization/monetization_ids.dart
-          for the matching ad-unit-ID placeholders.
+          Dot Commander's real AdMob App ID (AdMob console: Apps > App
+          settings > App ID). Debug builds still request Google's test ad
+          units regardless of this App ID; see
+          lib/monetization/monetization_ids.dart for the matching real
+          ad-unit IDs used by Release builds.
         -->
         <meta-data
             android:name="com.google.android.gms.ads.APPLICATION_ID"
-            android:value="ca-app-pub-3940256099942544~3347511713"/>
+            android:value="ca-app-pub-7136986047774590~9721406879"/>
         <activity
             android:name=".MainActivity"
             android:exported="true"

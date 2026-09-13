@@ -42,7 +42,10 @@ class _RemoveAdsTileState extends State<RemoveAdsTile> {
         key: Key('remove_ads_owned'),
         leading: Icon(Icons.check_circle_outline, color: Colors.lightGreen),
         title: Text('Remove Ads'),
-        subtitle: Text('Purchased. Banner and rewarded ads are suppressed.'),
+        subtitle: Text(
+          'Purchased. The banner is removed. Rewarded Common Chest ads '
+          'remain available whenever you want them.',
+        ),
       );
     }
     return ListTile(

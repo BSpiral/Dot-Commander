@@ -6,6 +6,7 @@ import '../core/simulation/vessel.dart';
 import '../monetization/ads_service.dart';
 import '../monetization/banner_ad_bar.dart';
 import '../monetization/billing_service.dart';
+import '../monetization/monetization_ids.dart';
 import '../monetization/monetization_store.dart';
 import '../monetization/rewarded_chest_service.dart';
 import '../pirates/persistence/voyage_store.dart';
@@ -26,9 +27,22 @@ class _CommandScreenState extends State<CommandScreen>
   var simulation = createCaribbean();
   late final store = widget.store ?? VoyageStore();
   late final monetizationStore = MonetizationStore();
-  late final rewardedAdController = RewardedAdController();
+  // One controller per real rewarded ad unit (three units currently back
+  // five chest categories -- see MonetizationIds.rewardedAdUnitIdFor).
+  // Sharing a controller across categories only shares ad supply; each
+  // category's own daily allowance still lives independently in
+  // MonetizationStore, keyed by category.
+  late final rewardedAdControllers = {
+    for (final group in RewardedAdGroup.values)
+      group: RewardedAdController(
+        adUnitId: MonetizationIds.rewardedAdUnitIdFor(group),
+      ),
+  };
   late final rewardedChestService = RewardedChestService(
-    ads: rewardedAdController,
+    adsByCategory: {
+      for (final category in ChestCategory.values)
+        category: rewardedAdControllers[category.rewardedAdGroup]!,
+    },
     store: monetizationStore,
   );
   late final billingService = BillingService(store: monetizationStore);
@@ -83,7 +97,9 @@ class _CommandScreenState extends State<CommandScreen>
   Future<void> _loadMonetization() async {
     final owned = await monetizationStore.hasRemoveAds();
     if (mounted) setState(() => hasRemoveAds = owned);
-    unawaited(rewardedAdController.preload());
+    for (final controller in rewardedAdControllers.values) {
+      unawaited(controller.preload());
+    }
     unawaited(billingService.start());
     _entitlementSub = billingService.entitlementGranted.listen((_) {
       if (mounted) setState(() => hasRemoveAds = true);
@@ -97,11 +113,15 @@ class _CommandScreenState extends State<CommandScreen>
   /// reward AND today's per-category allowance was atomically consumed
   /// in MonetizationStore. There is no await between that confirmation
   /// and this method's synchronous roll, so this is the single point
-  /// where the reward is actually materialized, exactly once.
+  /// where the reward is actually materialized, exactly once. The save
+  /// below is awaited (unlike other change-driven saves in this screen)
+  /// so the granted item is durably persisted before this call returns --
+  /// closing the window where the daily allowance was already consumed
+  /// but the resulting chest item had not yet reached disk.
   Future<void> _grantRewardedChest(ChestCategory category) async {
     final reward = simulation.openRewardedChest(category);
     setState(() {});
-    _save();
+    await _save();
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(

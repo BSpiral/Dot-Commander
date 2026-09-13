@@ -8,7 +8,18 @@ import 'monetization_ids.dart';
 /// One-time SDK bring-up. Safe to call more than once; the plugin itself
 /// no-ops a repeat initialize.
 class AdsService {
-  static Future<void> initialize() => MobileAds.instance.initialize();
+  static Future<void> initialize() async {
+    await MobileAds.instance.initialize();
+    // Registers MonetizationIds.testDeviceIds (empty by default) so a
+    // developer's own listed device always gets Google's test ad
+    // creative, regardless of which real ad unit ID is requested. A no-op
+    // when the list is empty, which is the default/shipping state.
+    if (MonetizationIds.testDeviceIds.isNotEmpty) {
+      await MobileAds.instance.updateRequestConfiguration(
+        RequestConfiguration(testDeviceIds: MonetizationIds.testDeviceIds),
+      );
+    }
+  }
 }
 
 enum RewardedShowResult {
@@ -27,6 +38,20 @@ enum RewardedShowResult {
   busy,
 }
 
+/// The abstract shape of "a source of rewarded ads" that
+/// [RewardedChestService] depends on -- [RewardedAdController] is the
+/// real (SDK-backed) implementation used in the app; tests can implement
+/// this directly with a fake to drive [RewardedChestService.watch]
+/// through its `earned` branch without touching the real ad SDK at all
+/// (which cannot be made to report an earned reward from a plain Dart
+/// test).
+abstract class RewardedAdSource {
+  bool get isReady;
+  bool get isBusy;
+  Future<void> preload();
+  Future<RewardedShowResult> show();
+}
+
 /// Owns exactly one rewarded ad's lifecycle at a time: preload and show.
 /// This is a pure ad-mechanics primitive -- it knows nothing about gems,
 /// chests, or any other in-game reward; callers (e.g.
@@ -42,20 +67,31 @@ enum RewardedShowResult {
 ///    in flight (there can only ever be one fullscreen rewarded ad on
 ///    screen at a time; a repeated tap or an app pause/resume racing a
 ///    still-open ad cannot start a duplicate show).
-class RewardedAdController {
+class RewardedAdController implements RewardedAdSource {
+  /// Which ad unit this controller loads/shows. Several Common Chest
+  /// categories intentionally share one controller/ad unit (see
+  /// MonetizationIds.rewardedAdUnitIdFor) -- that only shares ad supply;
+  /// [_busy] still ensures only one show() across every category using
+  /// this same controller can be in flight at a time.
+  final String adUnitId;
+  RewardedAdController({this.adUnitId = MonetizationIds.testRewardedAdUnitId});
+
   RewardedAd? _ad;
   bool _loading = false;
   bool _busy = false;
 
+  @override
   bool get isReady => _ad != null;
+  @override
   bool get isBusy => _busy;
 
+  @override
   Future<void> preload() async {
     if (_ad != null || _loading) return;
     _loading = true;
     try {
       await RewardedAd.load(
-        adUnitId: MonetizationIds.rewardedAdUnitId,
+        adUnitId: adUnitId,
         request: const AdRequest(),
         rewardedAdLoadCallback: RewardedAdLoadCallback(
           onAdLoaded: (ad) => _ad = ad,
@@ -83,6 +119,7 @@ class RewardedAdController {
   /// confirmed the user earned the reward -- the caller must not grant
   /// anything until it sees that value, and must grant it at most once
   /// per call to [show].
+  @override
   Future<RewardedShowResult> show() async {
     if (_busy) return RewardedShowResult.busy;
     final ad = _ad;

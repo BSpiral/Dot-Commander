@@ -12,6 +12,29 @@ import 'package:dot_commander/pirates/world/caribbean.dart';
 import 'package:dot_commander/ui/management/management_panel.dart';
 import 'package:dot_commander/ui/management/progression_panel.dart';
 
+/// A fake [RewardedAdSource] that returns a canned [RewardedShowResult]
+/// from every [show] call, so [RewardedChestService.watch]'s `earned`
+/// branch (and every other branch) can be exercised directly, without
+/// the real ad SDK -- which cannot be driven to report an earned reward
+/// from a plain Dart/widget test.
+class _FakeRewardedAdSource implements RewardedAdSource {
+  RewardedShowResult result;
+  int showCalls = 0;
+  _FakeRewardedAdSource(this.result);
+
+  @override
+  bool get isReady => true;
+  @override
+  bool get isBusy => false;
+  @override
+  Future<void> preload() async {}
+  @override
+  Future<RewardedShowResult> show() async {
+    showCalls++;
+    return result;
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -130,7 +153,7 @@ void main() {
         final store = MonetizationStore(now: () => DateTime.utc(2026, 1, 1));
         const cap = 1;
         expect(await store.recordRewardedOpen('chest_hull', cap), isTrue);
-        final service = RewardedChestService(
+        final service = RewardedChestService.singleSource(
           ads: RewardedAdController(),
           store: store,
           dailyCap: cap,
@@ -143,7 +166,7 @@ void main() {
     );
 
     test('reports notAvailable when no ad is loaded and the category has room', () async {
-      final service = RewardedChestService(
+      final service = RewardedChestService.singleSource(
         ads: RewardedAdController(),
         store: MonetizationStore(now: () => DateTime.utc(2026, 1, 1)),
       );
@@ -157,7 +180,7 @@ void main() {
       'one chest category reaching its 5/5 cap does not block a different category',
       () async {
         final store = MonetizationStore(now: () => DateTime.utc(2026, 1, 1));
-        final service = RewardedChestService(
+        final service = RewardedChestService.singleSource(
           ads: RewardedAdController(),
           store: store,
         );
@@ -182,6 +205,128 @@ void main() {
       final keys = ChestCategory.values.map((c) => 'chest_${c.name}').toSet();
       expect(keys.length, ChestCategory.values.length);
     });
+
+    test(
+      'an earned reward grants exactly once and consumes exactly one allowance',
+      () async {
+        final ads = _FakeRewardedAdSource(RewardedShowResult.earned);
+        final store = MonetizationStore(now: () => DateTime.utc(2026, 1, 1));
+        final service = RewardedChestService.singleSource(
+          ads: ads,
+          store: store,
+        );
+        expect(
+          await service.watch(ChestCategory.hull),
+          RewardedChestOutcome.granted,
+        );
+        expect(await service.remainingToday(ChestCategory.hull), 4);
+        expect(ads.showCalls, 1);
+      },
+    );
+
+    test(
+      'dismissedWithoutReward from the ad source grants nothing and consumes no allowance',
+      () async {
+        final ads = _FakeRewardedAdSource(
+          RewardedShowResult.dismissedWithoutReward,
+        );
+        final store = MonetizationStore(now: () => DateTime.utc(2026, 1, 1));
+        final service = RewardedChestService.singleSource(
+          ads: ads,
+          store: store,
+        );
+        expect(
+          await service.watch(ChestCategory.hull),
+          RewardedChestOutcome.dismissedWithoutReward,
+        );
+        expect(await service.remainingToday(ChestCategory.hull), 5);
+      },
+    );
+
+    test('busy from the ad source is passed through and grants nothing', () async {
+      final ads = _FakeRewardedAdSource(RewardedShowResult.busy);
+      final store = MonetizationStore(now: () => DateTime.utc(2026, 1, 1));
+      final service = RewardedChestService.singleSource(
+        ads: ads,
+        store: store,
+      );
+      expect(
+        await service.watch(ChestCategory.hull),
+        RewardedChestOutcome.busy,
+      );
+      expect(await service.remainingToday(ChestCategory.hull), 5);
+    });
+
+    test(
+      'reaching 5/5 through repeated earned rewards disables only that category',
+      () async {
+        final ads = _FakeRewardedAdSource(RewardedShowResult.earned);
+        final store = MonetizationStore(now: () => DateTime.utc(2026, 1, 1));
+        final service = RewardedChestService.singleSource(
+          ads: ads,
+          store: store,
+        );
+        for (var i = 0; i < 5; i++) {
+          expect(
+            await service.watch(ChestCategory.hull),
+            RewardedChestOutcome.granted,
+          );
+        }
+        // The 6th watch must not even ask the ad source to show -- the
+        // pre-check short-circuits once the category is capped.
+        expect(
+          await service.watch(ChestCategory.hull),
+          RewardedChestOutcome.capReached,
+        );
+        expect(ads.showCalls, 5);
+        // A different category, same shared ad source, is untouched.
+        expect(
+          await service.watch(ChestCategory.equipment),
+          RewardedChestOutcome.granted,
+        );
+        expect(await service.remainingToday(ChestCategory.equipment), 4);
+      },
+    );
+
+    test(
+      'categories sharing the same real AdMob rewarded unit still keep independent daily counters',
+      () async {
+        // Mirrors production: Crew, Equipment and Cannon/Ordnance are all
+        // mapped to the same "Crew/Equipment" ad unit (see
+        // ChestCategoryRewardedGroup), so they share one ad source here.
+        final shared = _FakeRewardedAdSource(RewardedShowResult.earned);
+        final store = MonetizationStore(now: () => DateTime.utc(2026, 1, 1));
+        final service = RewardedChestService(
+          adsByCategory: {
+            ChestCategory.equipment: shared,
+            ChestCategory.crew: shared,
+            ChestCategory.cannon: shared,
+            ChestCategory.hull: _FakeRewardedAdSource(
+              RewardedShowResult.earned,
+            ),
+            ChestCategory.officers: _FakeRewardedAdSource(
+              RewardedShowResult.earned,
+            ),
+          },
+          store: store,
+        );
+        expect(
+          await service.watch(ChestCategory.equipment),
+          RewardedChestOutcome.granted,
+        );
+        expect(
+          await service.watch(ChestCategory.crew),
+          RewardedChestOutcome.granted,
+        );
+        expect(await service.remainingToday(ChestCategory.equipment), 4);
+        expect(await service.remainingToday(ChestCategory.crew), 4);
+        // Cannon shares the same ad source/unit but was never watched --
+        // its allowance is untouched, proving the shared ad unit did not
+        // combine or pre-spend anyone's daily cap.
+        expect(await service.remainingToday(ChestCategory.cannon), 5);
+        expect(shared.showCalls, 2);
+      },
+    );
   });
 
   group('Voyage reset must never touch monetization state', () {
@@ -258,7 +403,7 @@ void main() {
       'each showing its own 5/5 remaining-today count',
       (tester) async {
         final voyage = createCaribbean();
-        final service = RewardedChestService(
+        final service = RewardedChestService.singleSource(
           ads: RewardedAdController(),
           store: MonetizationStore(now: () => DateTime.utc(2026, 1, 1)),
         );
@@ -316,7 +461,7 @@ void main() {
                   ship: voyage.ships.first,
                   tab: 0,
                   changed: () {},
-                  rewardedChests: RewardedChestService(
+                  rewardedChests: RewardedChestService.singleSource(
                     ads: RewardedAdController(),
                     store: MonetizationStore(now: () => DateTime.utc(2026, 1, 1)),
                   ),
@@ -360,7 +505,7 @@ void main() {
                 paused: false,
                 togglePause: () {},
                 hasRemoveAds: true, // owned
-                rewardedChests: RewardedChestService(
+                rewardedChests: RewardedChestService.singleSource(
                   ads: RewardedAdController(),
                   store: MonetizationStore(now: () => DateTime.utc(2026, 1, 1)),
                 ),

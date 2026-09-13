@@ -36,16 +36,38 @@ enum RewardedChestOutcome {
 /// (PiratesVoyage.openRewardedChest) is the caller's job, and must only
 /// run when this reports [RewardedChestOutcome.granted] -- never
 /// speculatively, and never more than once per call to [watch].
+///
+/// [adsByCategory] maps each category to the ad source that serves it.
+/// Several categories are deliberately mapped to the SAME underlying ad
+/// source/unit (see MonetizationIds.rewardedAdUnitIdFor) -- that only
+/// shares ad supply between them; the daily allowance below is always
+/// looked up and consumed by [ChestCategory], never by ad source, so
+/// sharing an ad unit can never combine or inflate two categories' caps.
 class RewardedChestService {
-  final RewardedAdController ads;
+  final Map<ChestCategory, RewardedAdSource> adsByCategory;
   final MonetizationStore store;
   final int dailyCap;
 
   RewardedChestService({
-    required this.ads,
+    required this.adsByCategory,
     required this.store,
     this.dailyCap = Balance.rewardedChestDailyCap,
-  });
+  }) : assert(
+         ChestCategory.values.every(adsByCategory.containsKey),
+         'adsByCategory must map every ChestCategory to an ad source',
+       );
+
+  /// Convenience for when every category shares one ad source (e.g. most
+  /// tests, or a build that hasn't split rewarded ad units by category).
+  factory RewardedChestService.singleSource({
+    required RewardedAdSource ads,
+    required MonetizationStore store,
+    int dailyCap = Balance.rewardedChestDailyCap,
+  }) => RewardedChestService(
+    adsByCategory: {for (final c in ChestCategory.values) c: ads},
+    store: store,
+    dailyCap: dailyCap,
+  );
 
   String _key(ChestCategory category) => 'chest_${category.name}';
 
@@ -64,7 +86,7 @@ class RewardedChestService {
     if (await remainingToday(category) <= 0) {
       return RewardedChestOutcome.capReached;
     }
-    final result = await ads.show();
+    final result = await adsByCategory[category]!.show();
     switch (result) {
       case RewardedShowResult.busy:
         return RewardedChestOutcome.busy;
