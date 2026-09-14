@@ -66,6 +66,30 @@ android {
             } else {
                 signingConfigs.getByName("debug")
             }
+            // Explicitly OFF. This project has never shipped a
+            // proguard-rules.pro / consumer keep-rules file, but AGP 9.0.1
+            // enables R8 minification for the release build type by
+            // default. Confirmed via build/app/outputs/mapping/release/
+            // usage.txt on the eb5c213/dfb9448 Release build: R8 was
+            // silently stripping members from io.flutter.plugins.
+            // googlemobileads.* (AdInstanceManager, AppStateNotifier,
+            // Constants, and 400+ other entries) and hundreds of
+            // com.google.android.gms.ads / com.android.billingclient
+            // members -- exactly the plugin glue classes google_mobile_ads
+            // and in_app_purchase register reflectively during Flutter
+            // engine/plugin attachment, i.e. at app startup, before any
+            // Dart code runs. That is the release-only, install-succeeds-
+            // but-open-fails startup crash: it could not exist before
+            // monetization (nothing reflection-sensitive was in the
+            // dependency graph yet) and no local test can catch it
+            // (flutter test never runs the real compiled native/plugin
+            // code path). Turning minification off removes an entire
+            // class of this bug with certainty, rather than hand-enumerating
+            // keep rules for every reflective call site across two
+            // Google SDKs. Revisit only alongside a real proguard-rules.pro
+            // that has actually been verified against a real device launch.
+            isMinifyEnabled = false
+            isShrinkResources = false
         }
     }
 }
