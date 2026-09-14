@@ -35,8 +35,20 @@ abstract final class LifeBalance {
       fieldPriceMultiplier = 2.0,
       fieldLimit = 2;
   static const maxNpcs = 20, maxPirates = 10, maxHunters = 2;
-  static const arrivalInterval = 60.0,
-      arrivalChance = .01,
+  // Arrival pacing (repaired 2026-09-14: the previous 60s/1% pairing
+  // averaged one successful spawn roll per ~100 minutes of active
+  // engine time -- far too slow to ever refill toward maxNpcs during a
+  // normal session, so a world that dipped to a low population (via
+  // departures/defeats) could only keep draining, never recover. At
+  // 15s/15%, the expected time to a single success is ~100s (~1.7min);
+  // refilling a 13-ship deficit (e.g. 7 -> 20) averages ~22 minutes of
+  // continuous play -- noticeably recovering within an ordinary
+  // session, never instant (still gated one roll per interval, still
+  // capped by npcCount >= maxNpcs before every roll), and still leaves
+  // natural fluctuation from the independent, much rarer departure/
+  // defeat attrition below.
+  static const arrivalInterval = 15.0,
+      arrivalChance = .15,
       departureChance = .01;
   static const pirateRespawn = 60.0, playerRespawn = 5.0;
   static const hunterThresholds = [4, 8], hunterRetire = 2, merchantAttacks = 2;

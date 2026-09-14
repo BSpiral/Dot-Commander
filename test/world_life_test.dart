@@ -291,8 +291,8 @@ void main() {
   });
 
   test(
-    'merchant behavior earns gems through cumulative cargo sales, '
-    'independent of the universal visit trickle',
+    'merchant behavior earns gems through successful trade COMPLETIONS '
+    '(dock count), independent of the universal visit trickle',
     () {
       final v = createCaribbean();
       final s = v.ships.first..behavior = BehaviorMode.merchant;
@@ -300,27 +300,40 @@ void main() {
       s.position = s.destination!.position;
       expect(v.gems, 0);
 
-      // Each stop sells up to buyLimit (10, no port bonus yet) cargo
-      // units. Balance.merchantSalesPerGem=40, so crossing 40 cumulative
-      // units sold (the 4th ten-unit stop) must grant exactly 1 gem --
-      // not sooner, and not dependent on the unrelated visit counter.
-      for (var stop = 0; stop < 4; stop++) {
-        s.cargo = 10;
+      // Balance.merchantDocksPerGem=5, so the 5th successful trade
+      // completion (a dock with cargo actually sold) must grant exactly
+      // 1 gem -- regardless of how much cargo each stop sold, and not
+      // dependent on the unrelated visit counter.
+      for (var stop = 0; stop < 5; stop++) {
+        s.cargo = 3; // sale VALUE must not matter anymore -- keep it small
         v.life.startPort(s);
         // Bypass the full repair/crew/buy tick sequence -- this test is
         // isolating the gem-trickle arithmetic, not a full port cycle
         // (already covered by other tests in this file).
         v.life.works.remove(s.id);
         v.heldShips.remove(s.id);
+        // Reset the SEPARATE, pre-existing every-5th-port-visit trickle
+        // after every dock -- it also increments on every playerOwned
+        // dock regardless of behavior, and this loop's 5th dock would
+        // otherwise coincidentally also land on visit #5.
+        v.progress.visits = 0;
       }
       expect(v.gems, 1);
-      expect(v.progress.merchantSales, 0); // 40 sold, 40 consumed -> 0 left over
+      expect(v.progress.merchantDockStreak, 0); // 5 completions, reset
 
       // Neutralize the SEPARATE, pre-existing every-5th-port-visit
       // trickle (Balance.visitsPerGem) so the remaining checks isolate
       // the merchant-specific mechanism only -- otherwise the next
       // startPort call would coincidentally also be visit #5.
       v.progress.visits = 1;
+
+      // An idle dock with nothing to sell (sold == 0) must NOT advance
+      // the streak -- only genuine trade completions count.
+      s.cargo = 0;
+      v.life.startPort(s);
+      v.life.works.remove(s.id);
+      v.heldShips.remove(s.id);
+      expect(v.progress.merchantDockStreak, 0);
 
       // A non-merchant behavior selling cargo must NOT feed this trickle.
       s.behavior = BehaviorMode.pirate;
@@ -329,7 +342,7 @@ void main() {
       v.life.works.remove(s.id);
       v.heldShips.remove(s.id);
       expect(v.gems, 1);
-      expect(v.progress.merchantSales, 0);
+      expect(v.progress.merchantDockStreak, 0);
 
       // An NPC merchant (not player-owned) must never grant the player gems.
       final npc = v.ships.firstWhere((ship) => !ship.playerOwned)
@@ -339,6 +352,51 @@ void main() {
       npc.position = npc.destination!.position;
       v.life.startPort(npc);
       expect(v.gems, 1);
+    },
+  );
+  test(
+    'merchant dock streak persists correctly through save/load, mid-streak',
+    () async {
+      String? data;
+      final store = VoyageStore(
+        read: () async => data,
+        write: (s) async {
+          data = s;
+        },
+      );
+      final v = createCaribbean();
+      final s = v.ships.first..behavior = BehaviorMode.merchant;
+      s.destination = v.life.portFor(s);
+      s.position = s.destination!.position;
+      // 3 of the 5 needed completions -- a genuine mid-streak save.
+      for (var stop = 0; stop < 3; stop++) {
+        s.cargo = 5;
+        v.life.startPort(s);
+        v.life.works.remove(s.id);
+        v.heldShips.remove(s.id);
+      }
+      expect(v.progress.merchantDockStreak, 3);
+      expect(v.gems, 0);
+      await store.save(v);
+      final loaded = await store.load();
+      expect(loaded.progress.merchantDockStreak, 3);
+      // Neutralize the separate visit trickle (persisted at 3 from the
+      // pre-save docks) so the next 2 docks don't coincidentally land
+      // on visit #5 too.
+      loaded.progress.visits = 0;
+      final loadedShip = loaded.ships.first..behavior = BehaviorMode.merchant;
+      loadedShip.destination = loaded.life.portFor(loadedShip);
+      loadedShip.position = loadedShip.destination!.position;
+      // 2 more completions after reload must complete the streak (5
+      // total, not 3+5=8) and grant exactly 1 gem.
+      for (var stop = 0; stop < 2; stop++) {
+        loadedShip.cargo = 5;
+        loaded.life.startPort(loadedShip);
+        loaded.life.works.remove(loadedShip.id);
+        loaded.heldShips.remove(loadedShip.id);
+      }
+      expect(loaded.progress.merchantDockStreak, 0);
+      expect(loaded.gems, 1);
     },
   );
 }

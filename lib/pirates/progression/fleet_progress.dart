@@ -85,17 +85,20 @@ abstract final class Balance {
       // replace normal gem-earning progression, only supplement one
       // category's worth of Common Chests per day per type.
       rewardedChestDailyCap = 5,
-      // A merchant-specific gem trickle: every this many cumulative cargo
-      // units SOLD at port while in Merchant behavior earns +1 gem,
-      // independent of (and additional to) the universal every-5th-
-      // port-visit trickle every behavior already gets. Gated on actual
-      // trade volume (bounded by hold size, travel time and coin
-      // available to restock), not simply on time or visiting, so it
-      // cannot be farmed faster than genuine merchant play allows -- at
-      // a typical ~8-13 units sold per profitable stop this paces to
-      // roughly one gem every 3-4 real trade calls, comparable to (not
-      // dramatically faster than) the visit trickle's own cadence.
-      merchantSalesPerGem = 40,
+      // A merchant-specific gem trickle (revised 2026-09-14 from a
+      // sale-VALUE basis to a trade-COMPLETION-count basis, per
+      // feedback that reliable long-term merchant gem progression
+      // should track successful dock/trade activity, not cargo value):
+      // every this many successful merchant trade completions -- a
+      // dock where behavior was Merchant AND actual cargo was sold
+      // (sold > 0) -- earns +1 gem. Idle docking with nothing to sell,
+      // a canceled trip, or any non-merchant behavior never advances
+      // this counter (see WorldLife.startPort), so it can't be farmed
+      // by looping empty dock visits; each qualifying completion is
+      // also bounded by real travel time between ports. Independent of
+      // (and additional to) the universal every-Nth-port-visit trickle
+      // every behavior already gets.
+      merchantDocksPerGem = 5,
       // Explorer discoveries: each qualifying observation (arriving at
       // and completing a look at a search-kind destination) rolls
       // against a per-ship probability that starts at this base...
@@ -299,12 +302,11 @@ class FleetProgress {
   final Map<FleetTrack, int> tree = {};
   final List<EquipmentItem> inventory = [];
   final List<String> lastRewards = [];
-  // Cumulative cargo units sold at port while a command was in Merchant
-  // behavior -- the merchant-specific gem trickle (Balance.
-  // merchantSalesPerGem) counts against this, independent of the
-  // universal every-Nth-port-visit trickle every behavior already gets.
-  // See WorldLife.startPort.
-  int nextItem = 1, visits = 0, merchantSales = 0;
+  // Count of successful merchant trade completions (dock + actual sale)
+  // since the last gem was awarded -- the merchant-specific gem trickle
+  // (Balance.merchantDocksPerGem) resets this to 0 on every award. See
+  // WorldLife.startPort.
+  int nextItem = 1, visits = 0, merchantDockStreak = 0;
   FleetProgress(List<Vessel> ships) {
     for (final s in ships.where((s) => s.playerOwned)) {
       commands[s.id] = CommandProgress(s.id);
@@ -479,7 +481,7 @@ class FleetProgress {
     'inventory': inventory.map((i) => i.toJson()).toList(),
     'nextItem': nextItem,
     'visits': visits,
-    'merchantSales': merchantSales,
+    'merchantDockStreak': merchantDockStreak,
     'lastRewards': lastRewards,
   };
   void restore(Map<String, dynamic> j, List<Vessel> ships) {
@@ -503,9 +505,13 @@ class FleetProgress {
     nextItem = j['nextItem'] as int;
     visits = j['visits'] as int? ?? 0;
     if (visits < 0) throw const FormatException('Invalid visit count');
-    merchantSales = j['merchantSales'] as int? ?? 0;
-    if (merchantSales < 0) {
-      throw const FormatException('Invalid merchant sales count');
+    // Old saves carry a 'merchantSales' key from the prior sale-value
+    // mechanic; it's intentionally not read here (a different counter
+    // under different semantics -- see the field comment above) and is
+    // simply dropped, starting every existing save's dock streak at 0.
+    merchantDockStreak = j['merchantDockStreak'] as int? ?? 0;
+    if (merchantDockStreak < 0) {
+      throw const FormatException('Invalid merchant dock streak');
     }
     if (nextItem < 1 ||
         inventory.any(

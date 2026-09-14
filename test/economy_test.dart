@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:math';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:dot_commander/core/simulation/vessel.dart';
 import 'package:dot_commander/pirates/economy/port_economy.dart';
 import 'package:dot_commander/pirates/progression/fleet_progress.dart';
 import 'package:dot_commander/pirates/world/caribbean.dart';
@@ -124,7 +125,14 @@ void main() {
     'every fifth qualifying port visit grants exactly one gem, persists, and does not affect NPCs',
     () async {
       final v = createCaribbean();
-      final s = v.ships.first;
+      // Not Merchant: isolates the universal every-5th-visit trickle
+      // this test exercises from the SEPARATE merchant-specific
+      // dock-streak gem trickle (Balance.merchantDocksPerGem), which
+      // would otherwise also fire on this same repeated single-ship
+      // dock cycle and double the gem count at their shared 5-visit
+      // cadence. See world_life_test.dart for that mechanism's own
+      // dedicated coverage.
+      final s = v.ships.first..behavior = BehaviorMode.privateer;
       expect(v.progress.visits, 0);
       expect(v.gems, 0);
       void dock() {

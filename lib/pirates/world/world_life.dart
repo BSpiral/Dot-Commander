@@ -288,11 +288,15 @@ class WorldLife {
     log(s, 'Sold $sold cargo +$sale coins');
     // Merchant-specific gem trickle: a legitimate gem source through
     // merchant gameplay itself (active trading), not requiring a switch
-    // to pirate/privateer combat. See Balance.merchantSalesPerGem.
+    // to pirate/privateer combat. Counts successful trade completions
+    // (this dock, with sold > 0), not sale value -- see
+    // Balance.merchantDocksPerGem. Idle docking with nothing to sell
+    // (sold == 0, e.g. an empty hold) never reaches this branch, so it
+    // can't be farmed by looping empty dock visits.
     if (s.playerOwned && s.behavior == BehaviorMode.merchant && sold > 0) {
-      v.progress.merchantSales += sold;
-      while (v.progress.merchantSales >= Balance.merchantSalesPerGem) {
-        v.progress.merchantSales -= Balance.merchantSalesPerGem;
+      v.progress.merchantDockStreak++;
+      if (v.progress.merchantDockStreak >= Balance.merchantDocksPerGem) {
+        v.progress.merchantDockStreak = 0;
         v.gems++;
         log(s, 'Trade bonus: +1 gem');
       }
