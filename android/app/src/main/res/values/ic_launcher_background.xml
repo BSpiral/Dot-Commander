@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Adaptive icon background: the same navy used throughout the app
+         (scaffoldBackgroundColor in main.dart, and the top banner strip),
+         so the padding around the icon artwork reads as intentional
+         framing rather than an arbitrary fill. -->
+    <color name="ic_launcher_background">#0B2330</color>
+</resources>
