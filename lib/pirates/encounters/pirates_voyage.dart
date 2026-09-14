@@ -256,10 +256,13 @@ class PiratesVoyage extends Simulation {
     final previous = {for (final s in ships) s.id: s.activity};
     super.update(dt);
     for (final s in ships.toList()) {
-      if (s.atSea &&
-          previous[s.id] == Activity.sailing &&
-          s.activity == Activity.docked) {
+      if (!s.atSea || previous[s.id] != Activity.sailing) continue;
+      if (s.activity == Activity.docked) {
         life.startPort(s);
+      } else if (s.activity == Activity.observing) {
+        // One qualifying observation = one genuine arrival at a search
+        // destination (not a fixed timer -- see WorldLife.checkDiscovery).
+        life.checkDiscovery(s);
       }
     }
     for (final run in _active.toList()) {

@@ -157,14 +157,25 @@ class VoyageStore {
     if (version == 4 || version == 5 || version == 6 || version == 7) {
       final timestamp = (jsonDecode(source) as Map<String, dynamic>)['savedAt'];
       if (timestamp is int) {
-        final minutes = ((now().millisecondsSinceEpoch - timestamp) ~/ 60000)
-            .clamp(0, loaded.progress.offlineCapMinutes);
-        final reward =
-            (minutes * (loaded.progress.tree[FleetTrack.offline] ?? 0) * .001)
-                .floor();
+        final minutes =
+            (now().millisecondsSinceEpoch - timestamp) ~/ 60000;
+        final reward = Balance.offlineRewardCoins(
+          loaded.progress.tree[FleetTrack.offline] ?? 0,
+          minutes,
+        );
         if (reward > 0) {
           loaded.coins += reward;
-          await save(loaded);
+          // A save failure here must not discard an otherwise-valid
+          // `loaded` voyage back to the caller -- it would propagate
+          // out of load() entirely (this whole method's caller has no
+          // narrower try/catch than "the whole load failed"), throwing
+          // away a correctly-decoded voyage over a transient write
+          // hiccup in what is, at worst, a delayed persistence of a
+          // reward that will simply be recomputed (from the same
+          // still-on-disk `savedAt`) the next time load() runs.
+          try {
+            await save(loaded);
+          } catch (_) {}
         }
       }
     }

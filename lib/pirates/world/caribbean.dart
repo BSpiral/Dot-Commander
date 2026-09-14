@@ -92,6 +92,12 @@ PiratesVoyage createCaribbean({
   int seed = 73,
   List<Vessel>? restoredShips,
   bool encountersEnabled = false,
+  // Tests-only: overrides the default Random(seed) with a caller-supplied
+  // source of randomness (e.g. a fake with controllable nextDouble/
+  // nextInt sequences), for deterministically testing probability-driven
+  // systems like Explorer discoveries. Ignored (Random(seed) is used) in
+  // every real call site, which never sets this.
+  Random? rng,
 }) {
   const names = [
     'Sea Lark',
@@ -166,7 +172,7 @@ PiratesVoyage createCaribbean({
     encountersEnabled: encountersEnabled,
     places: caribbeanPlaces,
     navigation: navigation,
-    rng: Random(seed),
+    rng: rng ?? Random(seed),
     ships:
         restoredShips ??
         [

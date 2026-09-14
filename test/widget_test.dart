@@ -101,30 +101,64 @@ void main() {
         expect(rect.right, lessThanOrEqualTo(size.width));
         expect(rect.height, greaterThanOrEqualTo(48));
       }
-      final orderRect = tester.getRect(find.byKey(const Key('order_explorer')));
-      expect(orderRect.width, greaterThanOrEqualTo(48));
-      if (size.width < 900) expect(orderRect.width, lessThanOrEqualTo(56));
-      expect(orderRect.height, greaterThanOrEqualTo(48));
-      if (size.width < 900) {
-        final chartRect = tester.getRect(find.byType(GameWidget<PiratesGame>));
-        expect(chartRect.bottom, lessThanOrEqualTo(orderRect.top));
-      }
+      // The behavior selector is now a small persistent tag -- an overlay
+      // that never reserves map space (see the "Behavior tag/overlay"
+      // tests below for the map-space-recovery assertion itself) -- so
+      // the game chart now always extends to the map's full bottom
+      // edge, with no carve-out for a permanently-expanded selector.
+      final tagRect = tester.getRect(find.byKey(const Key('behavior_tag')));
+      expect(tagRect.width, greaterThanOrEqualTo(48));
+      expect(tagRect.height, greaterThanOrEqualTo(32));
+      final chartRect = tester.getRect(find.byType(GameWidget<PiratesGame>));
+      expect(chartRect.bottom, closeTo(mapRect.bottom, .5));
       final deckSize = tester.getSize(find.byKey(const Key('broadside_deck')));
       expect(deckSize.width / deckSize.height, closeTo(2.8, .01));
+      await tester.tap(find.byKey(const Key('behavior_tag')));
+      await tester.pump();
+      expect(find.byKey(const Key('order_explorer')), findsOneWidget);
       await tester.tap(find.byKey(const Key('order_explorer')));
       await tester.pump();
       expect((await store.load()).ships.first.behavior.name, 'explorer');
+      // Selecting a behavior closes the overlay back to the small tag.
+      expect(find.byKey(const Key('order_explorer')), findsNothing);
       for (final tab in ['shop', 'tree', 'upgrades', 'deck', 'settings']) {
         final finder = find.byKey(Key('tab_$tab'));
         expect(tester.getRect(finder).bottom, lessThanOrEqualTo(size.height));
         await tester.tap(finder);
         await tester.pump();
-        expect(find.byKey(const Key('order_merchant')), findsOneWidget);
+        expect(find.byKey(const Key('behavior_tag')), findsOneWidget);
         expect(tester.takeException(), isNull);
       }
       await tester.pumpWidget(const SizedBox());
     });
   }
+  testWidgets(
+    'tapping outside the open behavior popup dismisses it without changing '
+    'the selected behavior',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final store = VoyageStore(read: () async => null, write: (_) async {});
+      await tester.pumpWidget(DotCommanderApp(store: store));
+      await tester.pump(const Duration(milliseconds: 100));
+      final before = (await store.load()).ships.first.behavior.name;
+      await tester.tap(find.byKey(const Key('behavior_tag')));
+      await tester.pump();
+      expect(find.byKey(const Key('order_explorer')), findsOneWidget);
+      // Tap somewhere clearly outside the popup (top-left corner, near
+      // the ad banner) -- the popup is a real Overlay entry now, so this
+      // exercises hit-testing across the whole screen, not just within
+      // the map's own bounds.
+      await tester.tapAt(const Offset(10, 10));
+      await tester.pump();
+      expect(find.byKey(const Key('order_explorer')), findsNothing);
+      expect((await store.load()).ships.first.behavior.name, before);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
   testWidgets(
     'five owned ships select independently and retain individual orders',
     (tester) async {
@@ -147,6 +181,8 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
       for (var i = 0; i < 5; i++) {
         await tester.tap(find.byKey(Key('fleet_slot_$i')));
+        await tester.pump();
+        await tester.tap(find.byKey(const Key('behavior_tag')));
         await tester.pump();
         await tester.tap(find.byKey(const Key('order_privateer')));
         await tester.pump();
@@ -218,6 +254,8 @@ void main() {
       final before = tester
           .widget<GameWidget<PiratesGame>>(find.byType(GameWidget<PiratesGame>))
           .game!;
+      await tester.tap(find.byKey(const Key('behavior_tag')));
+      await tester.pump();
       await tester.tap(find.byKey(const Key('order_explorer')));
       await tester.pump();
       for (final size in [const Size(1200, 800), const Size(320, 568)]) {

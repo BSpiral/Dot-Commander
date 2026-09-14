@@ -84,12 +84,51 @@ abstract final class Balance {
       // deliberate anti-farming control: watching ads cannot outpace or
       // replace normal gem-earning progression, only supplement one
       // category's worth of Common Chests per day per type.
-      rewardedChestDailyCap = 5;
+      rewardedChestDailyCap = 5,
+      // A merchant-specific gem trickle: every this many cumulative cargo
+      // units SOLD at port while in Merchant behavior earns +1 gem,
+      // independent of (and additional to) the universal every-5th-
+      // port-visit trickle every behavior already gets. Gated on actual
+      // trade volume (bounded by hold size, travel time and coin
+      // available to restock), not simply on time or visiting, so it
+      // cannot be farmed faster than genuine merchant play allows -- at
+      // a typical ~8-13 units sold per profitable stop this paces to
+      // roughly one gem every 3-4 real trade calls, comparable to (not
+      // dramatically faster than) the visit trickle's own cadence.
+      merchantSalesPerGem = 40,
+      // Explorer discoveries: each qualifying observation (arriving at
+      // and completing a look at a search-kind destination) rolls
+      // against a per-ship probability that starts at this base...
+      discoveryBaseProbability = .12,
+      // ...and increases by this much after every failed roll (reset to
+      // base the moment a discovery succeeds) -- see
+      // WorldLife.checkDiscovery. Randomness in real elapsed time
+      // between finds comes naturally from travel time between search
+      // points; this only controls the PER-OBSERVATION odds.
+      discoveryProbabilityStep = .06,
+      // Upper bound on the escalating probability, so a long unlucky
+      // streak eventually plateaus instead of approaching certainty.
+      discoveryProbabilityCap = .75;
   static int offlineCapMinutes(int level) =>
       offlineBaseMinutes +
       ((offlineMaxMinutes - offlineBaseMinutes) *
           level.clamp(0, maxLevel) ~/
           maxLevel);
+
+  /// Coins earned for being away for [elapsedMinutes] real-world minutes
+  /// at fleet-offline-tree [treeLevel] -- the single source of truth for
+  /// this formula, shared by VoyageStore.load (a true cold start) AND
+  /// CommandScreen's app-lifecycle resume handler (returning from the
+  /// background). Previously this reward was computed ONLY inside
+  /// VoyageStore.load, which runs exactly once per process launch --
+  /// backgrounding the app (by far the most common way a phone game is
+  /// "closed" without actually terminating the process) and later
+  /// resuming it never re-ran this calculation at all, so offline
+  /// progression silently never applied to that far more common case.
+  static int offlineRewardCoins(int treeLevel, int elapsedMinutes) {
+    final minutes = elapsedMinutes.clamp(0, offlineCapMinutes(treeLevel));
+    return (minutes * treeLevel * .001).floor();
+  }
   static const slotCosts = LifeBalance.commandPrices;
   static const chestCosts = {ChestKind.common: 10, ChestKind.rare: 50};
   static int treeCost(int level) => 1 + level + (level * level ~/ 100);
@@ -260,7 +299,12 @@ class FleetProgress {
   final Map<FleetTrack, int> tree = {};
   final List<EquipmentItem> inventory = [];
   final List<String> lastRewards = [];
-  int nextItem = 1, visits = 0;
+  // Cumulative cargo units sold at port while a command was in Merchant
+  // behavior -- the merchant-specific gem trickle (Balance.
+  // merchantSalesPerGem) counts against this, independent of the
+  // universal every-Nth-port-visit trickle every behavior already gets.
+  // See WorldLife.startPort.
+  int nextItem = 1, visits = 0, merchantSales = 0;
   FleetProgress(List<Vessel> ships) {
     for (final s in ships.where((s) => s.playerOwned)) {
       commands[s.id] = CommandProgress(s.id);
@@ -435,6 +479,7 @@ class FleetProgress {
     'inventory': inventory.map((i) => i.toJson()).toList(),
     'nextItem': nextItem,
     'visits': visits,
+    'merchantSales': merchantSales,
     'lastRewards': lastRewards,
   };
   void restore(Map<String, dynamic> j, List<Vessel> ships) {
@@ -458,6 +503,10 @@ class FleetProgress {
     nextItem = j['nextItem'] as int;
     visits = j['visits'] as int? ?? 0;
     if (visits < 0) throw const FormatException('Invalid visit count');
+    merchantSales = j['merchantSales'] as int? ?? 0;
+    if (merchantSales < 0) {
+      throw const FormatException('Invalid merchant sales count');
+    }
     if (nextItem < 1 ||
         inventory.any(
           (i) =>

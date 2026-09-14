@@ -289,4 +289,56 @@ void main() {
     expect(s.crewCount, 12);
     expect(v.coins, 92);
   });
+
+  test(
+    'merchant behavior earns gems through cumulative cargo sales, '
+    'independent of the universal visit trickle',
+    () {
+      final v = createCaribbean();
+      final s = v.ships.first..behavior = BehaviorMode.merchant;
+      s.destination = v.life.portFor(s);
+      s.position = s.destination!.position;
+      expect(v.gems, 0);
+
+      // Each stop sells up to buyLimit (10, no port bonus yet) cargo
+      // units. Balance.merchantSalesPerGem=40, so crossing 40 cumulative
+      // units sold (the 4th ten-unit stop) must grant exactly 1 gem --
+      // not sooner, and not dependent on the unrelated visit counter.
+      for (var stop = 0; stop < 4; stop++) {
+        s.cargo = 10;
+        v.life.startPort(s);
+        // Bypass the full repair/crew/buy tick sequence -- this test is
+        // isolating the gem-trickle arithmetic, not a full port cycle
+        // (already covered by other tests in this file).
+        v.life.works.remove(s.id);
+        v.heldShips.remove(s.id);
+      }
+      expect(v.gems, 1);
+      expect(v.progress.merchantSales, 0); // 40 sold, 40 consumed -> 0 left over
+
+      // Neutralize the SEPARATE, pre-existing every-5th-port-visit
+      // trickle (Balance.visitsPerGem) so the remaining checks isolate
+      // the merchant-specific mechanism only -- otherwise the next
+      // startPort call would coincidentally also be visit #5.
+      v.progress.visits = 1;
+
+      // A non-merchant behavior selling cargo must NOT feed this trickle.
+      s.behavior = BehaviorMode.pirate;
+      s.cargo = 40;
+      v.life.startPort(s);
+      v.life.works.remove(s.id);
+      v.heldShips.remove(s.id);
+      expect(v.gems, 1);
+      expect(v.progress.merchantSales, 0);
+
+      // An NPC merchant (not player-owned) must never grant the player gems.
+      final npc = v.ships.firstWhere((ship) => !ship.playerOwned)
+        ..behavior = BehaviorMode.merchant
+        ..cargo = 40;
+      npc.destination = v.life.portFor(npc);
+      npc.position = npc.destination!.position;
+      v.life.startPort(npc);
+      expect(v.gems, 1);
+    },
+  );
 }

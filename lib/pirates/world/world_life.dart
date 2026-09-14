@@ -4,6 +4,7 @@ import '../encounters/pirates_voyage.dart';
 import '../progression/fleet_progress.dart';
 import '../progression/life_balance.dart';
 import '../ships/hull_catalog.dart';
+import 'discoveries.dart';
 
 class PortWork {
   final String shipId;
@@ -70,6 +71,11 @@ class WorldLife {
   final Map<String, PortWork> works = {};
   double arrivalClock = 0;
   int nextNpc = 1;
+  // Per-ship escalating discovery probability -- see checkDiscovery.
+  // Keyed by ship ID so each of the player's commands builds its own
+  // independent luck streak; absent entries mean "at base probability"
+  // (never rolled yet, or just reset by a successful find).
+  final Map<String, double> discoveryProbability = {};
   WorldLife(this.v);
   void log(Vessel s, String message) {
     s.recentActivity.insert(0, message);
@@ -77,6 +83,42 @@ class WorldLife {
       s.recentActivity.removeLast();
     }
     v.revision++;
+  }
+
+  /// Rolls one Explorer discovery check for [s], called exactly once per
+  /// qualifying observation -- see PiratesVoyage.update, which fires this
+  /// the moment a ship's activity transitions into Activity.observing
+  /// (arriving at and completing a look at a search-kind destination).
+  /// Not a fixed timer: how often this actually fires depends entirely
+  /// on how often the ship reaches a new observation point, which itself
+  /// varies with real travel distance/time -- exactly the "10 seconds
+  /// apart, 90 seconds apart" organic pacing this was asked for.
+  ///
+  /// A failed roll raises the probability for THIS ship's next
+  /// qualifying observation (capped); a successful one resets to base
+  /// and grants a flavored reward drawn from discoveries.dart, weighted
+  /// so small finds are common and great finds are rare.
+  void checkDiscovery(Vessel s) {
+    if (!s.playerOwned || s.behavior != BehaviorMode.explorer) return;
+    final current =
+        discoveryProbability[s.id] ?? Balance.discoveryBaseProbability;
+    if (v.rng.nextDouble() >= current) {
+      discoveryProbability[s.id] = (current + Balance.discoveryProbabilityStep)
+          .clamp(Balance.discoveryBaseProbability, Balance.discoveryProbabilityCap);
+      return;
+    }
+    discoveryProbability[s.id] = Balance.discoveryBaseProbability;
+    final tierRoll = v.rng.nextDouble();
+    final tier = tierRoll < .04
+        ? DiscoveryTier.great
+        : tierRoll < .22
+        ? DiscoveryTier.good
+        : DiscoveryTier.small;
+    final options = discoveryContent.where((d) => d.tier == tier).toList();
+    final found = options[v.rng.nextInt(options.length)];
+    v.coins += found.gold;
+    v.gems += found.gems;
+    log(s, found.flavor);
   }
 
   int get npcCount => v.ships.where((s) => s.atSea && !s.playerOwned).length;
@@ -244,6 +286,17 @@ class WorldLife {
     final sale = (sold * LifeBalance.cargoSell * (1 + port)).floor();
     if (s.playerOwned) v.coins += sale;
     log(s, 'Sold $sold cargo +$sale coins');
+    // Merchant-specific gem trickle: a legitimate gem source through
+    // merchant gameplay itself (active trading), not requiring a switch
+    // to pirate/privateer combat. See Balance.merchantSalesPerGem.
+    if (s.playerOwned && s.behavior == BehaviorMode.merchant && sold > 0) {
+      v.progress.merchantSales += sold;
+      while (v.progress.merchantSales >= Balance.merchantSalesPerGem) {
+        v.progress.merchantSales -= Balance.merchantSalesPerGem;
+        v.gems++;
+        log(s, 'Trade bonus: +1 gem');
+      }
+    }
     w.remaining = max(
       LifeBalance.minimumServiceStage,
       LifeBalance.serviceSeconds(sold.toDouble(), serviceMultiplier(s)),
@@ -493,12 +546,26 @@ class WorldLife {
     'clock': arrivalClock,
     'nextNpc': nextNpc,
     'works': works.values.map((w) => w.toJson()).toList(),
+    'discoveryProbability': discoveryProbability,
   };
   void restore(Map<String, dynamic> j) {
     arrivalClock = (j['clock'] as num).toDouble();
     nextNpc = j['nextNpc'];
     if (!arrivalClock.isFinite || arrivalClock < 0 || nextNpc < 1) {
       throw const FormatException('Invalid world clock');
+    }
+    discoveryProbability.clear();
+    final rawProbability = j['discoveryProbability'] as Map<String, dynamic>?;
+    if (rawProbability != null) {
+      for (final entry in rawProbability.entries) {
+        final value = (entry.value as num).toDouble();
+        if (!value.isFinite ||
+            value < Balance.discoveryBaseProbability ||
+            value > Balance.discoveryProbabilityCap) {
+          throw const FormatException('Invalid discovery probability');
+        }
+        discoveryProbability[entry.key] = value;
+      }
     }
     for (final x in j['works']) {
       final w = PortWork.fromJson(x);

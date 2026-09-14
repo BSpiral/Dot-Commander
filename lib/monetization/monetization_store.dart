@@ -43,8 +43,18 @@ class MonetizationStore {
   }) : _prefs = prefs ?? SharedPreferences.getInstance,
        _now = now ?? DateTime.now;
 
+  // The player's own device-local calendar day, NOT UTC. Using UTC here
+  // previously meant "today" could roll over up to several hours before
+  // or after the player's own local midnight (e.g. a player at UTC-5
+  // sees the UTC day change at 7pm local, but their own local midnight
+  // doesn't register as a new "today" until 5am local) -- a real,
+  // confirmed multi-hour-per-day mismatch window that can make a daily
+  // allowance look "stuck" from the player's perspective even though
+  // the code is deterministically correct by its own (UTC) definition.
+  // Diagnosed during the time/progression repair pass; local time
+  // matches what a player actually experiences as "today."
   String _today() {
-    final d = _now().toUtc();
+    final d = _now();
     return '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
   }
 

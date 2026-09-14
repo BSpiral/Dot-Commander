@@ -100,7 +100,7 @@ void main() {
       expect(await store.remainingRewardedOpensToday('cannon', cap), 4);
     });
 
-    test('resets on a new UTC day', () async {
+    test('resets on a new calendar day', () async {
       var now = DateTime.utc(2026, 1, 1, 23, 59);
       final store = MonetizationStore(now: () => now);
       const cap = 2;
@@ -111,6 +111,36 @@ void main() {
       expect(await store.remainingRewardedOpensToday('a', cap), cap);
       expect(await store.recordRewardedOpen('a', cap), isTrue);
     });
+
+    test(
+      'uses the DateTime it is given directly, with no UTC conversion -- '
+      'the fix for daily allowances rolling over on the wrong calendar day '
+      'relative to the player\'s own local midnight',
+      () async {
+        // A plain (device-LOCAL-tagged) DateTime, not DateTime.utc(...).
+        // The bug this guards against: _today() used to call .toUtc()
+        // on whatever it was given, which can shift a local wall-clock
+        // date onto a different UTC calendar date depending on the
+        // device's timezone offset -- e.g. a player at UTC-5 sees the
+        // UTC day roll over at 7pm local, and does NOT see "today"
+        // change at their OWN local midnight until 5am local. _today()
+        // must read the year/month/day off exactly the DateTime it was
+        // handed, whatever timezone tag that DateTime carries.
+        var now = DateTime(2026, 6, 1, 10, 0);
+        final store = MonetizationStore(now: () => now);
+        const cap = 2;
+        expect(await store.recordRewardedOpen('a', cap), isTrue);
+        expect(await store.recordRewardedOpen('a', cap), isTrue);
+        expect(await store.recordRewardedOpen('a', cap), isFalse);
+        // Later the same local calendar day: must still be exhausted.
+        now = DateTime(2026, 6, 1, 23, 59);
+        expect(await store.remainingRewardedOpensToday('a', cap), 0);
+        // Crossing this DateTime's own local midnight: must reset.
+        now = DateTime(2026, 6, 2, 0, 1);
+        expect(await store.remainingRewardedOpensToday('a', cap), cap);
+        expect(await store.recordRewardedOpen('a', cap), isTrue);
+      },
+    );
 
     test('concurrent grant attempts for the same key never exceed the cap', () async {
       final fixed = DateTime.utc(2026, 1, 1);

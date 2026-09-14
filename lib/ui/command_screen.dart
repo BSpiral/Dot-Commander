@@ -17,7 +17,12 @@ import 'management/management_panel.dart';
 
 class CommandScreen extends StatefulWidget {
   final VoyageStore? store;
-  const CommandScreen({super.key, this.store});
+  // Injectable clock, tests-only (defaults to real DateTime.now) --
+  // lets the background/resume offline-reward path (see
+  // didChangeAppLifecycleState) be driven deterministically instead of
+  // depending on real wall-clock time actually elapsing during a test.
+  final DateTime Function()? now;
+  const CommandScreen({super.key, this.store, this.now});
   @override
   State<CommandScreen> createState() => _CommandScreenState();
 }
@@ -26,6 +31,7 @@ class _CommandScreenState extends State<CommandScreen>
     with WidgetsBindingObserver {
   var simulation = createCaribbean();
   late final store = widget.store ?? VoyageStore();
+  late final _now = widget.now ?? DateTime.now;
   late final monetizationStore = MonetizationStore();
   // One controller per real rewarded ad unit (three units currently back
   // five chest categories -- see MonetizationIds.rewardedAdUnitIdFor).
@@ -47,6 +53,28 @@ class _CommandScreenState extends State<CommandScreen>
   );
   late final billingService = BillingService(store: monetizationStore);
   bool ready = false, canSave = false, paused = false, hasRemoveAds = false;
+  // Set when the app is backgrounded (pauseEngine), cleared on resume.
+  // Lets a genuine background->foreground resume grant the SAME offline
+  // reward a true cold start already does via VoyageStore.load -- see
+  // didChangeAppLifecycleState. null means "not currently backgrounded"
+  // (e.g. right after a cold start, where VoyageStore.load already
+  // handled the offline gap for the time before this screen existed).
+  DateTime? _backgroundedAt;
+  // Whether the small Behavior tag's floating overlay/dropdown is open.
+  // See _behaviorTag/_behaviorOptions/_openBehaviorMenu -- a real
+  // Flutter Overlay entry anchored to the tag via a LayerLink, so it
+  // paints (and is hit-testable) above the WHOLE screen rather than
+  // being confined to the map's own Stack. That matters because the
+  // popup's content can be taller than the map area on short screens
+  // (small phones, short landscape) -- a Positioned overlay nested
+  // inside the map's Stack is hit-testable only within that Stack's own
+  // laid-out bounds (Clip.none affects painting, not hit-testing), so
+  // an overflowing popup would render correctly but silently fail to
+  // receive taps on its clipped-outside portion. A real Overlay has no
+  // such bound.
+  bool _behaviorMenuOpen = false;
+  final LayerLink _behaviorLink = LayerLink();
+  OverlayEntry? _behaviorOverlayEntry;
   int tab = 3;
   int savedRevision = 0;
   String? shownBattle;
@@ -85,6 +113,7 @@ class _CommandScreenState extends State<CommandScreen>
 
   @override
   void dispose() {
+    _behaviorOverlayEntry?.remove();
     WidgetsBinding.instance.removeObserver(this);
     saveTimer?.cancel();
     _save();
@@ -124,9 +153,7 @@ class _CommandScreenState extends State<CommandScreen>
     await _save();
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Received ${reward.name} (${reward.rarity})'),
-      ),
+      SnackBar(content: Text('Received ${reward.name} (${reward.rarity})')),
     );
   }
 
@@ -165,8 +192,22 @@ class _CommandScreenState extends State<CommandScreen>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (!ready) return;
     if (state == AppLifecycleState.resumed && !paused) {
+      final backgroundedAt = _backgroundedAt;
+      _backgroundedAt = null;
+      if (backgroundedAt != null) {
+        final minutes = _now().difference(backgroundedAt).inMinutes;
+        final reward = Balance.offlineRewardCoins(
+          simulation.progress.tree[FleetTrack.offline] ?? 0,
+          minutes,
+        );
+        if (reward > 0) {
+          setState(() => simulation.coins += reward);
+          _save();
+        }
+      }
       game.resumeEngine();
     } else {
+      _backgroundedAt = _now();
       game.pauseEngine();
       _save();
     }
@@ -230,7 +271,48 @@ class _CommandScreenState extends State<CommandScreen>
   void _order(BehaviorMode mode) {
     if (!selected.playerOwned) return;
     setState(() => simulation.setBehavior(selected, mode));
+    _closeBehaviorMenu();
     _save();
+  }
+
+  void _toggleBehaviorMenu() {
+    if (_behaviorMenuOpen) {
+      _closeBehaviorMenu();
+    } else {
+      _openBehaviorMenu();
+    }
+  }
+
+  void _openBehaviorMenu() {
+    _behaviorOverlayEntry = OverlayEntry(
+      builder: (context) => Stack(
+        children: [
+          // Tap-outside-to-dismiss, covering the whole screen (this is a
+          // top-level Overlay entry, not confined to the map).
+          Positioned.fill(
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onTap: _closeBehaviorMenu,
+            ),
+          ),
+          CompositedTransformFollower(
+            link: _behaviorLink,
+            targetAnchor: Alignment.topRight,
+            followerAnchor: Alignment.bottomRight,
+            offset: const Offset(0, -8),
+            child: _behaviorOptions(),
+          ),
+        ],
+      ),
+    );
+    Overlay.of(context).insert(_behaviorOverlayEntry!);
+    setState(() => _behaviorMenuOpen = true);
+  }
+
+  void _closeBehaviorMenu() {
+    _behaviorOverlayEntry?.remove();
+    _behaviorOverlayEntry = null;
+    if (mounted) setState(() => _behaviorMenuOpen = false);
   }
 
   Widget _fleet(List<Vessel> fleet) => SizedBox(
@@ -299,46 +381,106 @@ class _CommandScreenState extends State<CommandScreen>
       ),
     ),
   );
-  Widget _orders(bool wide, {bool horizontal = false}) {
-    const modes = [
-      BehaviorMode.explorer,
-      BehaviorMode.merchant,
-      BehaviorMode.pirate,
-      BehaviorMode.privateer,
-    ];
-    const icons = [
-      Icons.explore_outlined,
-      Icons.local_shipping_outlined,
-      Icons.flag_outlined,
-      Icons.shield_outlined,
-    ];
-    return SizedBox(
-      width: horizontal ? 208 : (wide ? 125 : 48),
-      child: Flex(
-        direction: horizontal ? Axis.horizontal : Axis.vertical,
+  static const _behaviorModes = [
+    BehaviorMode.explorer,
+    BehaviorMode.merchant,
+    BehaviorMode.pirate,
+    BehaviorMode.privateer,
+  ];
+  static const _behaviorIcons = [
+    Icons.explore_outlined,
+    Icons.local_shipping_outlined,
+    Icons.flag_outlined,
+    Icons.shield_outlined,
+  ];
+
+  /// The small persistent tag showing the CURRENTLY selected behavior --
+  /// replaces what used to be a permanently-expanded selector that
+  /// reserved real map space at all times. Tapping it opens
+  /// _behaviorOptions as a floating overlay at approximately the same
+  /// spot; selecting an option (or tapping the tag again) closes it.
+  Widget _behaviorTag() {
+    final index = _behaviorModes.indexOf(selected.behavior);
+    return CompositedTransformTarget(
+      link: _behaviorLink,
+      child: Material(
+        color: const Color(0xff163845),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+          side: const BorderSide(color: Color(0xffa58e61)),
+        ),
+        child: InkWell(
+          key: const Key('behavior_tag'),
+          borderRadius: BorderRadius.circular(20),
+          onTap: _toggleBehaviorMenu,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  index >= 0 ? _behaviorIcons[index] : Icons.help_outline,
+                  size: 18,
+                  color: const Color(0xffffd78b),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  selected.behavior.name,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: Color(0xffffd78b),
+                  ),
+                ),
+                Icon(
+                  _behaviorMenuOpen
+                      ? Icons.arrow_drop_up
+                      : Icons.arrow_drop_down,
+                  size: 18,
+                  color: const Color(0xffffd78b),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// The floating popup's contents (only built while _behaviorMenuOpen).
+  Widget _behaviorOptions() => Material(
+    color: const Color(0xff0f2b34),
+    borderRadius: BorderRadius.circular(10),
+    elevation: 8,
+    child: Container(
+      width: 148,
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xffa58e61)),
+      ),
+      child: Column(
         mainAxisSize: MainAxisSize.min,
-        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          for (var i = 0; i < modes.length; i++)
+          for (var i = 0; i < _behaviorModes.length; i++)
             Padding(
-              padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 2),
+              padding: const EdgeInsets.symmetric(vertical: 2),
               child: Tooltip(
                 message:
-                    '${modes[i].name}${selected.playerOwned ? '' : ' (NPC)'}',
+                    '${_behaviorModes[i].name}${selected.playerOwned ? '' : ' (NPC)'}',
                 child: Semantics(
-                  selected: selected.behavior == modes[i],
+                  selected: selected.behavior == _behaviorModes[i],
                   child: TextButton(
-                    key: Key('order_${modes[i].name}'),
+                    key: Key('order_${_behaviorModes[i].name}'),
                     onPressed: selected.playerOwned
-                        ? () => _order(modes[i])
+                        ? () => _order(_behaviorModes[i])
                         : null,
                     style: TextButton.styleFrom(
-                      minimumSize: Size(wide ? 120 : 48, 48),
+                      minimumSize: const Size(120, 48),
                       padding: const EdgeInsets.symmetric(horizontal: 4),
-                      backgroundColor: selected.behavior == modes[i]
+                      backgroundColor: selected.behavior == _behaviorModes[i]
                           ? const Color(0xff526053)
                           : const Color(0xff163845),
-                      foregroundColor: selected.behavior == modes[i]
+                      foregroundColor: selected.behavior == _behaviorModes[i]
                           ? const Color(0xffffdc93)
                           : Colors.white70,
                       disabledForegroundColor: Colors.white38,
@@ -349,17 +491,15 @@ class _CommandScreenState extends State<CommandScreen>
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(icons[i], size: 21),
-                        if (wide) ...[
-                          const SizedBox(width: 6),
-                          Expanded(
-                            child: Text(
-                              modes[i].name,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(fontSize: 12),
-                            ),
+                        Icon(_behaviorIcons[i], size: 21),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            _behaviorModes[i].name,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 12),
                           ),
-                        ],
+                        ),
                       ],
                     ),
                   ),
@@ -368,10 +508,10 @@ class _CommandScreenState extends State<CommandScreen>
             ),
         ],
       ),
-    );
-  }
+    ),
+  );
 
-  Widget _map(bool wide) => Container(
+  Widget _map() => Container(
     key: const Key('living_map'),
     color: const Color(0xff092b3b),
     child: Column(
@@ -403,42 +543,38 @@ class _CommandScreenState extends State<CommandScreen>
           ),
         ),
         Expanded(
-          child: Row(
+          child: Stack(
             children: [
-              Expanded(
-                child: Stack(
-                  children: [
-                    Positioned.fill(
-                      bottom: wide ? 0 : 60,
-                      child: GameWidget(key: _gameKey, game: game),
-                    ),
-                    if (!wide)
-                      Positioned(
-                        right: 4,
-                        bottom: 8,
-                        child: _orders(false, horizontal: true),
-                      ),
-                    if (kDebugMode)
-                      Positioned(
-                        left: 8,
-                        bottom: 4,
-                        child: IgnorePointer(
-                          child: Text(
-                            '${game.fps.toStringAsFixed(0)} FPS • ${selected.load.name} • pace ${selected.effectiveSpeed.toStringAsFixed(0)}',
-                            style: const TextStyle(
-                              fontSize: 10,
-                              color: Colors.white38,
-                            ),
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
+              // The map always gets the FULL area now -- no space is
+              // reserved for the behavior selector (previously a fixed
+              // 60px carve-out on narrow screens, or a whole side column
+              // on wide ones). The tag below is a Positioned overlay
+              // drawn on TOP of the map, which never affects a Stack's
+              // own sizing. Its popup, when open, is a real Flutter
+              // Overlay entry (see _openBehaviorMenu) rather than a
+              // Positioned nested in this Stack -- that popup's content
+              // can be taller than the map area on short screens (small
+              // phones, short landscape), and a Positioned nested here
+              // would only be hit-testable within this Stack's own
+              // laid-out bounds, silently swallowing taps on the
+              // overflowing part.
+              Positioned.fill(
+                child: GameWidget(key: _gameKey, game: game),
               ),
-              if (wide)
-                Padding(
-                  padding: const EdgeInsets.only(right: 4),
-                  child: _orders(wide),
+              Positioned(right: 4, bottom: 8, child: _behaviorTag()),
+              if (kDebugMode)
+                Positioned(
+                  left: 8,
+                  bottom: 4,
+                  child: IgnorePointer(
+                    child: Text(
+                      '${game.fps.toStringAsFixed(0)} FPS • ${selected.load.name} • pace ${selected.effectiveSpeed.toStringAsFixed(0)}',
+                      style: const TextStyle(
+                        fontSize: 10,
+                        color: Colors.white38,
+                      ),
+                    ),
+                  ),
                 ),
             ],
           ),
@@ -629,7 +765,7 @@ class _CommandScreenState extends State<CommandScreen>
                       child: wide
                           ? Row(
                               children: [
-                                Expanded(child: _map(c.maxWidth >= 900)),
+                                Expanded(child: _map()),
                                 SizedBox(
                                   width: c.maxWidth >= 900
                                       ? 360
@@ -640,7 +776,7 @@ class _CommandScreenState extends State<CommandScreen>
                             )
                           : Column(
                               children: [
-                                Expanded(child: _map(false)),
+                                Expanded(child: _map()),
                                 SizedBox(
                                   height: ((c.maxHeight - 80) * .38).clamp(
                                     170.0,

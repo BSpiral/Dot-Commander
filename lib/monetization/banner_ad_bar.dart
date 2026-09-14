@@ -30,13 +30,15 @@ class BannerAdBar extends StatefulWidget {
   State<BannerAdBar> createState() => _BannerAdBarState();
 }
 
-class _BannerAdBarState extends State<BannerAdBar> {
+class _BannerAdBarState extends State<BannerAdBar> with WidgetsBindingObserver {
   BannerAd? _ad;
   bool _loaded = false;
+  bool _loading = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     if (widget.showAds) _load();
   }
 
@@ -52,13 +54,35 @@ class _BannerAdBarState extends State<BannerAdBar> {
     }
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Safety net for backgrounding while a load was in flight or a
+    // failure's 30s retry timer was pending: the OS can suspend the
+    // process while backgrounded, which may drop a pending Future.delayed
+    // retry along with it, leaving the box stuck on the placeholder
+    // indefinitely with nothing left to ever retry it. A resume that
+    // still isn't showing a loaded ad (and has no load already in
+    // flight) gets one fresh, immediate attempt -- diagnosed as a
+    // plausible contributor during the time/progression repair pass,
+    // not a confirmed root cause on its own.
+    if (state == AppLifecycleState.resumed &&
+        widget.showAds &&
+        !_loaded &&
+        !_loading) {
+      _load();
+    }
+  }
+
   void _load() {
+    if (_loading) return;
+    _loading = true;
     final ad = BannerAd(
       adUnitId: MonetizationIds.bannerAdUnitId,
       size: AdSize.banner,
       request: const AdRequest(),
       listener: BannerAdListener(
         onAdLoaded: (ad) {
+          _loading = false;
           if (!mounted) {
             ad.dispose();
             return;
@@ -66,12 +90,13 @@ class _BannerAdBarState extends State<BannerAdBar> {
           setState(() => _loaded = true);
         },
         onAdFailedToLoad: (ad, error) {
+          _loading = false;
           ad.dispose();
           if (mounted) setState(() => _loaded = false);
           // The box itself stays put (placeholder text); retry shortly
           // rather than leaving a dead space or removing the container.
           Future.delayed(const Duration(seconds: 30), () {
-            if (mounted && widget.showAds && !_loaded) _load();
+            if (mounted && widget.showAds && !_loaded && !_loading) _load();
           });
         },
       ),
@@ -82,6 +107,7 @@ class _BannerAdBarState extends State<BannerAdBar> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _ad?.dispose();
     super.dispose();
   }
