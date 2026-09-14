@@ -554,13 +554,9 @@ class _CommandScreenState extends State<CommandScreen>
   );
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(
-      toolbarHeight: 40,
-      title: const Text(
-        'Dot Commander: Pirates',
-        style: TextStyle(fontSize: 18),
-      ),
-    ),
+    // No AppBar: the redundant "Dot Commander: Pirates" title was removed
+    // to recover vertical space, and the banner (below) now sits directly
+    // under the status bar instead of a title bar.
     body: !ready
         ? const Center(child: CircularProgressIndicator())
         : SafeArea(
@@ -575,6 +571,15 @@ class _CommandScreenState extends State<CommandScreen>
                     .toList();
                 return Column(
                   children: [
+                    // The permanent ad banner lives at the very top of the
+                    // screen now (status bar -> banner -> fleet selector),
+                    // recovering the gameplay space it used to occupy at
+                    // the bottom, below the map/management area. Same
+                    // BannerAdBar instance/logic as before -- only its
+                    // position in this Column moved; nothing about its
+                    // loading, retry, or Remove Ads collapse behavior
+                    // changed, and no second banner is created.
+                    BannerAdBar(showAds: !hasRemoveAds),
                     _fleet(fleet),
                     SizedBox(
                       height: 26,
@@ -646,7 +651,6 @@ class _CommandScreenState extends State<CommandScreen>
                               ],
                             ),
                     ),
-                    BannerAdBar(showAds: !hasRemoveAds),
                   ],
                 );
               },

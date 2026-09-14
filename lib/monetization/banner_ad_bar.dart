@@ -3,14 +3,18 @@ import 'package:google_mobile_ads/google_mobile_ads.dart';
 
 import 'monetization_ids.dart';
 
-/// The permanent ad container. This box (brown border, fixed height) is
-/// always present during ad-supported play -- it never collapses or
+/// The permanent ad strip: a fixed-height area, docked at the very top of
+/// the screen (directly under the status bar, above the fleet selector).
+/// It is always present during ad-supported play -- it never collapses or
 /// disappears while an ad is loading, only failed/retrying -- so the
 /// layout never jumps around. It shows placeholder text until a real
 /// banner creative has loaded, then swaps in the live [AdWidget] in the
-/// exact same spot, same border. It is never moved elsewhere.
+/// exact same spot. Formerly a bordered box further down the screen; the
+/// decorative border was dropped when it moved to the top so it reads as
+/// a normal top ad strip rather than a boxed-in panel wedged under the
+/// status bar. Loading/retry/collapse behavior is unchanged.
 ///
-/// The only time this box goes away is when Remove Ads is owned
+/// The only time this strip goes away is when Remove Ads is owned
 /// ([showAds] false), which fully collapses it to zero height.
 class BannerAdBar extends StatefulWidget {
   /// The container's fixed height, whether showing the placeholder or a
@@ -91,10 +95,7 @@ class _BannerAdBarState extends State<BannerAdBar> {
       width: double.infinity,
       height: BannerAdBar.height,
       alignment: Alignment.center,
-      decoration: BoxDecoration(
-        color: const Color(0xff1c130d),
-        border: Border.all(color: const Color(0xff8a6a4a), width: 1.5),
-      ),
+      color: const Color(0xff0b2330),
       child: _loaded && ad != null
           ? SizedBox(
               width: ad.size.width.toDouble(),

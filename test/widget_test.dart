@@ -53,7 +53,10 @@ void main() {
       );
       await tester.pumpWidget(DotCommanderApp(store: store));
       await tester.pump(const Duration(milliseconds: 100));
-      expect(find.text('Dot Commander: Pirates'), findsOneWidget);
+      // The redundant title/AppBar was removed (presentation pass): the
+      // banner now occupies the recovered top area instead.
+      expect(find.text('Dot Commander: Pirates'), findsNothing);
+      expect(find.byKey(const Key('banner_ad_bar')), findsOneWidget);
       expect(find.text('15 sails'), findsOneWidget);
       expect(
         tester
