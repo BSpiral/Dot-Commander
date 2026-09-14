@@ -303,7 +303,10 @@ void main() {
       // Balance.merchantDocksPerGem=5, so the 5th successful trade
       // completion (a dock with cargo actually sold) must grant exactly
       // 1 gem -- regardless of how much cargo each stop sold, and not
-      // dependent on the unrelated visit counter.
+      // dependent on the unrelated visit counter. Merchant behavior no
+      // longer feeds the universal every-5th-visit trickle AT ALL (see
+      // WorldLife.startPort), so this same loop also proves that
+      // trickle never fires for these docks -- no double-dip.
       for (var stop = 0; stop < 5; stop++) {
         s.cargo = 3; // sale VALUE must not matter anymore -- keep it small
         v.life.startPort(s);
@@ -312,30 +315,25 @@ void main() {
         // (already covered by other tests in this file).
         v.life.works.remove(s.id);
         v.heldShips.remove(s.id);
-        // Reset the SEPARATE, pre-existing every-5th-port-visit trickle
-        // after every dock -- it also increments on every playerOwned
-        // dock regardless of behavior, and this loop's 5th dock would
-        // otherwise coincidentally also land on visit #5.
-        v.progress.visits = 0;
       }
       expect(v.gems, 1);
       expect(v.progress.merchantDockStreak, 0); // 5 completions, reset
-
-      // Neutralize the SEPARATE, pre-existing every-5th-port-visit
-      // trickle (Balance.visitsPerGem) so the remaining checks isolate
-      // the merchant-specific mechanism only -- otherwise the next
-      // startPort call would coincidentally also be visit #5.
-      v.progress.visits = 1;
+      expect(v.progress.visits, 0); // Merchant docks never touch this
 
       // An idle dock with nothing to sell (sold == 0) must NOT advance
-      // the streak -- only genuine trade completions count.
+      // the streak, and (still Merchant) must not touch the universal
+      // trickle either.
       s.cargo = 0;
       v.life.startPort(s);
       v.life.works.remove(s.id);
       v.heldShips.remove(s.id);
       expect(v.progress.merchantDockStreak, 0);
+      expect(v.progress.visits, 0);
 
-      // A non-merchant behavior selling cargo must NOT feed this trickle.
+      // A non-merchant behavior IS eligible for the universal trickle
+      // again (it's Merchant-specific exclusion, not a global one) --
+      // this dock is visit #1 for that trickle, and must not touch the
+      // merchant-specific streak.
       s.behavior = BehaviorMode.pirate;
       s.cargo = 40;
       v.life.startPort(s);
@@ -343,6 +341,7 @@ void main() {
       v.heldShips.remove(s.id);
       expect(v.gems, 1);
       expect(v.progress.merchantDockStreak, 0);
+      expect(v.progress.visits, 1);
 
       // An NPC merchant (not player-owned) must never grant the player gems.
       final npc = v.ships.firstWhere((ship) => !ship.playerOwned)
@@ -352,6 +351,31 @@ void main() {
       npc.position = npc.destination!.position;
       v.life.startPort(npc);
       expect(v.gems, 1);
+    },
+  );
+  test(
+    'a merchant cannot receive both the merchant-specific gem AND the '
+    'universal visit-trickle gem from the same 5th dock/trade event',
+    () {
+      final v = createCaribbean();
+      final s = v.ships.first..behavior = BehaviorMode.merchant;
+      s.destination = v.life.portFor(s);
+      s.position = s.destination!.position;
+      // Both Balance.merchantDocksPerGem and Balance.visitsPerGem are 5
+      // -- if Merchant docks fed both counters, the 5th successful
+      // trade completion would grant 2 gems at once (one from each
+      // system triggering on the very same event). It must grant
+      // exactly 1.
+      expect(Balance.merchantDocksPerGem, Balance.visitsPerGem);
+      for (var stop = 0; stop < 5; stop++) {
+        s.cargo = 3;
+        v.life.startPort(s);
+        v.life.works.remove(s.id);
+        v.heldShips.remove(s.id);
+      }
+      expect(v.gems, 1, reason: 'must not double-dip on the 5th event');
+      expect(v.progress.visits, 0);
+      expect(v.progress.merchantDockStreak, 0);
     },
   );
   test(

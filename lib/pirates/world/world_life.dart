@@ -250,7 +250,16 @@ class WorldLife {
       log(s, 'Departed world at ${s.destination?.name}');
       return;
     }
-    if (s.playerOwned) {
+    // The universal every-Nth-visit trickle excludes Merchant behavior:
+    // Merchant has its own dedicated gem progression below (the
+    // dock-streak trickle, gated on actual successful trades), and
+    // letting Merchant docks also feed this generic counter would let
+    // a single dock/trade event double-dip both gem sources at once
+    // (their thresholds can land on the same event by construction,
+    // not just coincidence). Every other player behavior (pirate,
+    // explorer, privateer) is unaffected and keeps this trickle
+    // exactly as before.
+    if (s.playerOwned && s.behavior != BehaviorMode.merchant) {
       v.progress.visits++;
       if (v.progress.visits % Balance.visitsPerGem == 0) {
         v.gems++;
