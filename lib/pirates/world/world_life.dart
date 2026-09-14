@@ -489,6 +489,28 @@ class WorldLife {
       if (w.remaining == 0) _advance(s, w);
     }
     if (!v.encountersEnabled) return;
+    // Pirate floor: guarantee a normal, playing world always has at
+    // least one pirate somewhere in play -- either actively at sea, or
+    // due back from a defeat respawn timer -- so the pirate lifecycle
+    // (creation, routing, combat, respawn) is actually provable and a
+    // normal player encounters one. Fires only when NO pirate anywhere
+    // qualifies (a truly empty roster, or one that permanently
+    // departed via departureChance and will never return on its own);
+    // a pirate that's merely between defeat and its 60s respawn still
+    // counts, so this can never stack a second pirate on top of one
+    // already due back. This is a floor of exactly 1, not a frequency
+    // change -- pirateCount is necessarily 0 whenever this fires (see
+    // below), so it can't push past maxPirates either.
+    final hasPirate = v.ships.any(
+      (s) =>
+          s.behavior == BehaviorMode.pirate &&
+          (s.atSea || s.respawnRemaining > 0),
+    );
+    if (v.ships.length >= LifeBalance.minRosterForPopulationFloors &&
+        !hasPirate &&
+        npcCount < LifeBalance.maxNpcs) {
+      spawn(BehaviorMode.pirate);
+    }
     final pressure = pirateCount;
     for (final s in v.ships.where((s) => s.atSea && s.hunter)) {
       if (pressure <= LifeBalance.hunterRetire && !s.retiring) {
@@ -535,8 +557,19 @@ class WorldLife {
     arrivalClock += dt;
     if (arrivalClock >= LifeBalance.arrivalInterval) {
       arrivalClock %= LifeBalance.arrivalInterval;
+      // Below the critical floor, this arrival is guaranteed rather
+      // than merely LifeBalance.arrivalChance likely -- see
+      // LifeBalance.criticalNpcFloor for why: combat losses (a
+      // permanent removal for non-pirate/hunter NPCs, by design) can
+      // outpace the probabilistic trickle regardless of how that
+      // trickle alone is tuned. Above the floor, arrivals stay purely
+      // probabilistic, preserving natural fluctuation and never
+      // forcing the world toward maxNpcs.
+      final guaranteed =
+          v.ships.length >= LifeBalance.minRosterForPopulationFloors &&
+          npcCount < LifeBalance.criticalNpcFloor;
       if (npcCount < LifeBalance.maxNpcs &&
-          v.rng.nextDouble() < LifeBalance.arrivalChance) {
+          (guaranteed || v.rng.nextDouble() < LifeBalance.arrivalChance)) {
         spawn(weightedRole());
       }
     }

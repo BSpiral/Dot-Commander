@@ -50,6 +50,42 @@ abstract final class LifeBalance {
   static const arrivalInterval = 15.0,
       arrivalChance = .15,
       departureChance = .01;
+  // Deterministic population floor (2026-09-14): below this many active
+  // NPCs, an arrival roll is GUARANTEED on the next interval instead of
+  // only LifeBalance.arrivalChance likely -- discovered cause: combat
+  // defeat of a non-pirate, non-hunter NPC (merchant/explorer/regular
+  // privateer) is a PERMANENT population loss by existing design
+  // (WorldLife.defeat sets respawnRemaining=0 for that case -- see
+  // test/lifecycle_persistence_test.dart's own "truly gone, not a
+  // respawn candidate" assertion, which this does NOT change). With
+  // encounters enabled, that ongoing combat drain -- pirates actively
+  // hunt merchants, the largest single arrival-weight role -- can
+  // outpace the probabilistic arrival trickle no matter how that
+  // trickle alone is tuned, stalling a drained world well below
+  // maxNpcs indefinitely (a live report of ~5 NPCs not climbing even
+  // after the arrival-rate repair above is what surfaced this). Set to
+  // half of maxNpcs, not just barely above the reported stuck point,
+  // so a critically low world visibly climbs for a sustained stretch
+  // (guaranteed arrivals ~15s apart) rather than gaining one ship and
+  // immediately reverting to the gentler probabilistic pace. This
+  // floor guarantees forward progress out of a critically low
+  // population without forcing the world toward maxNpcs or removing
+  // fluctuation above it: once npcCount reaches this floor, arrivals
+  // go back to being merely likely, not certain.
+  static const criticalNpcFloor = 10;
+  // Both population-recovery floors below (criticalNpcFloor and the
+  // pirate floor) only act once the world's total roster is at least
+  // this large. Real gameplay always starts at 15 ships (createCaribbean)
+  // and this total never shrinks below what it started at (defeated/
+  // departed ships stay in the list as inactive entries rather than
+  // being removed -- see WorldLife.tick's >60 cleanup), so this never
+  // excludes a real, live-drained-low-population world. It exists
+  // purely to leave small, deliberately hand-built test fixtures (e.g.
+  // a 2-ship isolated combat scenario) alone: the floor concept itself
+  // is meaningless for a world that was never meant to model the real
+  // roster size, and those fixtures should not observe extra ships
+  // they never asked for.
+  static const minRosterForPopulationFloors = 10;
   static const pirateRespawn = 60.0, playerRespawn = 5.0;
   static const hunterThresholds = [4, 8], hunterRetire = 2, merchantAttacks = 2;
   static const roleWeights = [.50, .10, .05, .35];
