@@ -4,8 +4,69 @@ import 'package:dot_commander/main.dart';
 import 'package:dot_commander/pirates/world/caribbean.dart';
 import 'package:dot_commander/pirates/persistence/voyage_store.dart';
 import 'package:dot_commander/pirates/progression/fleet_progress.dart';
+import 'package:dot_commander/ui/management/progression_panel.dart';
 
 void main() {
+  testWidgets(
+    'Upgrades tab groups equipment into Hull/Ordnance/Equipment/Crew/'
+    'Officers sections and shows empty slots plainly instead of hiding them',
+    (tester) async {
+      final v = createCaribbean();
+      final ship = v.ships.firstWhere((s) => s.playerOwned);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: ProgressionPanel(
+                voyage: v,
+                ship: ship,
+                tab: 2,
+                changed: () {},
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      // "Hull" and "Ordnance" each appear twice: once as the section
+      // header, once as that section's single slot's own row label
+      // (single-slot categories) -- the other three are distinct.
+      expect(find.text('Hull'), findsNWidgets(2));
+      expect(find.text('Ordnance'), findsNWidgets(2));
+      expect(find.text('Equipment'), findsOneWidget);
+      expect(find.text('Crew'), findsOneWidget);
+      expect(find.text('Officers'), findsOneWidget);
+      // A fresh command has nothing equipped except the default Sloop hull
+      // (its own special-cased "Basic Sloop (default...)" row) -- every
+      // other one of the 13 slots should read as an explicit EMPTY slot
+      // rather than disappearing from the layout.
+      expect(find.text('EMPTY — unequipped'), findsNWidgets(12));
+      expect(find.textContaining('Basic Sloop'), findsOneWidget);
+      // Equipping something turns that slot's row from empty to named,
+      // and one fewer EMPTY row remains.
+      v.progress.inventory.add(
+        const EquipmentItem('item-1', 'Test Cutlass', ItemKind.weapon),
+      );
+      v.progress.commands[ship.id]!.equipped[ItemKind.weapon] = 'item-1';
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: ProgressionPanel(
+                voyage: v,
+                ship: ship,
+                tab: 2,
+                changed: () {},
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(find.text('EMPTY — unequipped'), findsNWidgets(11));
+      expect(find.text('Test Cutlass'), findsWidgets);
+    },
+  );
   testWidgets(
     'phone purchase, command Tree, chest reward and hull equip save through real controls',
     (tester) async {

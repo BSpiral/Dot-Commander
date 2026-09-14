@@ -180,28 +180,65 @@ class CommandProgress {
   int level(CommandTrack t) => tree[t] ?? 0;
   double units(CommandTrack t) => LifeBalance.rewardUnits(level(t));
   double percent(CommandTrack t) => LifeBalance.percent(level(t));
+  /// Every purchase on a track grows ALL of that track's linked stats at
+  /// once (see FleetProgress.apply -- e.g. a Hull level always adds both
+  /// capacity and Damage Reduction and Post-Battle Repair together). The
+  /// headline below rotates through those linked facets so repeated
+  /// purchases read as varied, honestly-described payoffs of the same
+  /// investment instead of one stat name forever. Core (uncapped) stats
+  /// always show their real numeric delta; percent-based secondary/
+  /// utility facets say so plainly once the shared 20% cap is reached.
   String nextBenefit(CommandTrack track) {
     final current = level(track);
     if (current >= LifeBalance.maxLevels) return 'Maximum level reached';
-    final units =
+    final unitsDelta =
         LifeBalance.rewardUnits(current + 1) - LifeBalance.rewardUnits(current);
-    final percent =
+    final percentDelta =
         (LifeBalance.percent(current + 1) - LifeBalance.percent(current)) * 100;
     String number(double value) =>
         value.toStringAsFixed(2).replaceFirst(RegExp(r'\.?0+$'), '');
-    if (track == CommandTrack.hull) {
-      return 'Next level: +${number(units * LifeBalance.hullPerUnit)} Hull capacity';
+    String percentLine(String benefit) => percentDelta <= 0
+        ? 'Next level: +0% $benefit (cap reached)'
+        : 'Next level: +${number(percentDelta)}% $benefit';
+    switch (track) {
+      case CommandTrack.hull:
+        const pattern = [
+          'Hull capacity',
+          'Damage Reduction',
+          'Hull capacity',
+          'Post-Battle Hull Repair',
+          'Port Repair Discount',
+        ];
+        final step = pattern[current % pattern.length];
+        return step == 'Hull capacity'
+            ? 'Next level: +${number(unitsDelta * LifeBalance.hullPerUnit)} Hull capacity'
+            : percentLine(step);
+      case CommandTrack.firepower:
+        const pattern = ['Firepower', 'Opening Attack Strength'];
+        final step = pattern[current % pattern.length];
+        return step == 'Firepower'
+            ? 'Next level: +${number(unitsDelta * LifeBalance.firePerUnit)} firepower'
+            : percentLine(step);
+      case CommandTrack.crew:
+        const pattern = [
+          'Crew Effectiveness',
+          'Crew Recovery',
+          'Crew Effectiveness',
+          'Boarding Defense',
+        ];
+        return percentLine(pattern[current % pattern.length]);
+      case CommandTrack.navigation:
+        const pattern = [
+          'Sailing Speed',
+          'Handling',
+          'Sailing Speed',
+          'Rigging-Damage Mitigation',
+        ];
+        return percentLine(pattern[current % pattern.length]);
+      case CommandTrack.portRelations:
+        const pattern = ['Port Service Discount', 'Trade Profit Bonus'];
+        return percentLine(pattern[current % pattern.length]);
     }
-    if (track == CommandTrack.firepower) {
-      return 'Next level: +${number(units * LifeBalance.firePerUnit)} firepower';
-    }
-    if (percent <= 0) return 'Next level: +0% (secondary bonuses capped)';
-    final benefit = switch (track) {
-      CommandTrack.navigation => 'base sailing speed',
-      CommandTrack.crew => 'crew effectiveness / recovery',
-      _ => 'port bonus',
-    };
-    return 'Next level: +${number(percent)}% $benefit';
   }
 
   String label(CommandTrack t) {
@@ -302,13 +339,19 @@ class FleetProgress {
     s.postHullRecovery = c.percent(CommandTrack.hull);
     s.postCrewRecovery = c.percent(CommandTrack.crew);
     s.ordnance = 'standard';
-    s.crewDefense = 0;
+    // Tree-sourced secondary bonuses (each track's own base value, before
+    // equipment's own += on top of it below) -- gives every Command Tree
+    // track a second, thematically-related payoff instead of a single
+    // repeated stat, using fields this game already resolves in combat/
+    // port logic. See CommandProgress.nextBenefit for the matching
+    // player-facing description of each.
+    s.crewDefense = c.percent(CommandTrack.crew);
     s.openingVolley = 0;
-    s.penaltyMitigation = 0;
+    s.penaltyMitigation = c.percent(CommandTrack.navigation);
     s.minimumMovement = 0;
-    s.economyBonus = 0;
+    s.economyBonus = c.percent(CommandTrack.portRelations);
     s.fieldRepairBonus = 0;
-    s.openingAttack = 0;
+    s.openingAttack = c.percent(CommandTrack.firepower);
     for (final id in c.equipped.values) {
       final i = item(id)!;
       final d = i.definition;

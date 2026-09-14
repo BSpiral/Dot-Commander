@@ -205,43 +205,91 @@ class ProgressionPanel extends StatelessWidget {
             ),
           ),
         );
-        for (final kind in ItemKind.values) {
-          final current = p.item(c.equipped[kind]);
+        // Grouped by the same five categories the Shop's Common/Rare
+        // Chests already use (ChestCategory) -- one clearly-headed section
+        // per category, in slot order within it, so equipped/empty state
+        // reads at a glance instead of one flat undifferentiated list.
+        const sectionOrder = [
+          ChestCategory.hull,
+          ChestCategory.cannon,
+          ChestCategory.equipment,
+          ChestCategory.crew,
+          ChestCategory.officers,
+        ];
+        for (final category in sectionOrder) {
+          final kinds = ItemKind.values.where(category.accepts);
           widgets.add(
-            row(
-              crewSlots.contains(kind)
-                  ? 'Crew • ${kind.name}'
-                  : officerSlots.contains(kind)
-                  ? 'Officer • ${kind.name}'
-                  : kind.name,
-              current?.name ??
-                  (kind == ItemKind.hull
-                      ? 'Basic Sloop (default, not an inventory item)'
-                      : 'None equipped'),
-              'Unequip',
-              current != null && !voyage.busy(ship.id)
-                  ? () => action(() {
-                      voyage.equip(ship.id, kind, null);
-                    })
-                  : null,
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 2),
+              child: Text(
+                category.label,
+                style: const TextStyle(
+                  color: Color(0xffddbe7c),
+                  fontWeight: FontWeight.bold,
+                  fontSize: 13,
+                ),
+              ),
             ),
           );
-          for (final item in p.inventory.where((i) => i.kind == kind)) {
-            final owner = p.assignedTo(item.id),
-                equipped = current?.id == item.id;
+          for (final kind in kinds) {
+            final current = p.item(c.equipped[kind]);
+            final isDefaultHull = kind == ItemKind.hull && current == null;
             widgets.add(
-              row(
-                item.name,
-                '${item.description}\n${item.rarity} • ${item.id}${owner == null ? '' : ' • on ${voyage.ships.firstWhere((s) => s.id == owner).name}'}',
-                equipped ? 'Equipped' : 'Equip',
-                !equipped && owner == null && !voyage.busy(ship.id)
-                    ? () => action(() {
-                        voyage.equip(ship.id, kind, item.id);
-                      })
-                    : null,
-                key: Key('equip_${item.id}'),
+              ListTile(
+                dense: true,
+                leading: Icon(
+                  current != null || isDefaultHull
+                      ? Icons.check_circle
+                      : Icons.circle_outlined,
+                  color: current != null || isDefaultHull
+                      ? const Color(0xff8fd19e)
+                      : Colors.white38,
+                  size: 20,
+                ),
+                title: Text(_slotLabel(kind)),
+                subtitle: Text(
+                  current?.name ??
+                      (isDefaultHull
+                          ? 'Basic Sloop (default, not an inventory item)'
+                          : 'EMPTY — unequipped'),
+                  style: current == null && !isDefaultHull
+                      ? const TextStyle(
+                          color: Colors.white38,
+                          fontStyle: FontStyle.italic,
+                        )
+                      : null,
+                ),
+                trailing: TextButton(
+                  key: Key('unequip_${kind.name}'),
+                  onPressed: current != null && !voyage.busy(ship.id)
+                      ? () => action(() {
+                          voyage.equip(ship.id, kind, null);
+                        })
+                      : null,
+                  child: const Text('Unequip'),
+                ),
               ),
             );
+            for (final item in p.inventory.where((i) => i.kind == kind)) {
+              final owner = p.assignedTo(item.id),
+                  equipped = current?.id == item.id;
+              widgets.add(
+                Padding(
+                  padding: const EdgeInsets.only(left: 12),
+                  child: row(
+                    item.name,
+                    '${item.description}\n${item.rarity} • ${item.id}${owner == null ? '' : ' • on ${voyage.ships.firstWhere((s) => s.id == owner).name}'}',
+                    equipped ? 'Equipped' : 'Equip',
+                    !equipped && owner == null && !voyage.busy(ship.id)
+                        ? () => action(() {
+                            voyage.equip(ship.id, kind, item.id);
+                          })
+                        : null,
+                    key: Key('equip_${item.id}'),
+                  ),
+                ),
+              );
+            }
           }
         }
         if (p.inventory.isEmpty) {
@@ -257,3 +305,22 @@ class ProgressionPanel extends StatelessWidget {
     return Column(children: widgets);
   }
 }
+
+/// Human-readable slot name for an equipment section row. Section headers
+/// already establish the category (Hull/Ordnance/Equipment/Crew/Officers),
+/// so this only needs to name the individual slot within it.
+String _slotLabel(ItemKind kind) => switch (kind) {
+  ItemKind.hull => 'Hull',
+  ItemKind.cannon => 'Ordnance',
+  ItemKind.equipment => 'Ship Equipment',
+  ItemKind.head => 'Head',
+  ItemKind.body => 'Body',
+  ItemKind.hands => 'Hands',
+  ItemKind.legs => 'Legs',
+  ItemKind.weapon => 'Weapon',
+  ItemKind.captain => 'Captain',
+  ItemKind.quartermaster => 'Quartermaster',
+  ItemKind.bosun => 'Bosun',
+  ItemKind.carpenter => 'Carpenter',
+  ItemKind.navigator => 'Navigator',
+};

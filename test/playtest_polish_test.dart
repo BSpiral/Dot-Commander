@@ -24,11 +24,14 @@ void main() {
         'Next level: +${entry.value} Hull capacity',
       );
     }
+    // Levels 0/100/500 all land on navigation's rotation index 0
+    // ("Sailing Speed") -- 100 and 500 are both multiples of the 4-step
+    // pattern length, matching the varied-rotation coverage below.
     for (final entry in {0: '0.01', 100: '0.02', 500: '0.06'}.entries) {
       c.tree[CommandTrack.navigation] = entry.key;
       expect(
         c.nextBenefit(CommandTrack.navigation),
-        'Next level: +${entry.value}% base sailing speed',
+        'Next level: +${entry.value}% Sailing Speed',
       );
     }
     c.tree[CommandTrack.navigation] = 600;
@@ -41,6 +44,94 @@ void main() {
       'Next level: +0.04 firepower',
     );
   });
+  test(
+    'each Command Tree track rotates through varied, accurate headline facets',
+    () {
+      final c = CommandProgress('test');
+      // Hull: capacity, Damage Reduction, capacity, Post-Battle Hull
+      // Repair, Port Repair Discount, then repeats -- CORE/secondary/
+      // CORE/utility/related, matching the requested progression style.
+      c.tree[CommandTrack.hull] = 0;
+      expect(c.nextBenefit(CommandTrack.hull), contains('Hull capacity'));
+      c.tree[CommandTrack.hull] = 1;
+      expect(c.nextBenefit(CommandTrack.hull), contains('Damage Reduction'));
+      c.tree[CommandTrack.hull] = 2;
+      expect(c.nextBenefit(CommandTrack.hull), contains('Hull capacity'));
+      c.tree[CommandTrack.hull] = 3;
+      expect(
+        c.nextBenefit(CommandTrack.hull),
+        contains('Post-Battle Hull Repair'),
+      );
+      c.tree[CommandTrack.hull] = 4;
+      expect(
+        c.nextBenefit(CommandTrack.hull),
+        contains('Port Repair Discount'),
+      );
+      c.tree[CommandTrack.hull] = 5;
+      expect(c.nextBenefit(CommandTrack.hull), contains('Hull capacity'));
+
+      // Firepower: core firepower alternating with Opening Attack Strength.
+      c.tree[CommandTrack.firepower] = 0;
+      expect(c.nextBenefit(CommandTrack.firepower), contains('firepower'));
+      c.tree[CommandTrack.firepower] = 1;
+      expect(
+        c.nextBenefit(CommandTrack.firepower),
+        contains('Opening Attack Strength'),
+      );
+
+      // Crew: Effectiveness, Recovery, Effectiveness, Boarding Defense.
+      c.tree[CommandTrack.crew] = 0;
+      expect(c.nextBenefit(CommandTrack.crew), contains('Crew Effectiveness'));
+      c.tree[CommandTrack.crew] = 1;
+      expect(c.nextBenefit(CommandTrack.crew), contains('Crew Recovery'));
+      c.tree[CommandTrack.crew] = 2;
+      expect(c.nextBenefit(CommandTrack.crew), contains('Crew Effectiveness'));
+      c.tree[CommandTrack.crew] = 3;
+      expect(c.nextBenefit(CommandTrack.crew), contains('Boarding Defense'));
+
+      // Navigation: Sailing Speed, Handling, Sailing Speed, Rigging-Damage
+      // Mitigation.
+      c.tree[CommandTrack.navigation] = 1;
+      expect(c.nextBenefit(CommandTrack.navigation), contains('Handling'));
+      c.tree[CommandTrack.navigation] = 3;
+      expect(
+        c.nextBenefit(CommandTrack.navigation),
+        contains('Rigging-Damage Mitigation'),
+      );
+
+      // Port Relations: Service Discount alternating with Trade Profit Bonus.
+      c.tree[CommandTrack.portRelations] = 0;
+      expect(
+        c.nextBenefit(CommandTrack.portRelations),
+        contains('Port Service Discount'),
+      );
+      c.tree[CommandTrack.portRelations] = 1;
+      expect(
+        c.nextBenefit(CommandTrack.portRelations),
+        contains('Trade Profit Bonus'),
+      );
+    },
+  );
+  test(
+    'Command Tree secondary bonuses (crewDefense/penaltyMitigation/'
+    'economyBonus/openingAttack) actually reach the vessel via apply()',
+    () {
+      final v = createCaribbean();
+      final ship = v.ships.firstWhere((s) => s.playerOwned);
+      final c = v.progress.commands[ship.id]!;
+      c.tree[CommandTrack.crew] = 500;
+      c.tree[CommandTrack.navigation] = 500;
+      c.tree[CommandTrack.portRelations] = 500;
+      c.tree[CommandTrack.firepower] = 500;
+      v.progress.apply(ship);
+      final expected = LifeBalance.percent(500);
+      expect(expected, greaterThan(0));
+      expect(ship.crewDefense, closeTo(expected, 1e-9));
+      expect(ship.penaltyMitigation, closeTo(expected, 1e-9));
+      expect(ship.economyBonus, closeTo(expected, 1e-9));
+      expect(ship.openingAttack, closeTo(expected, 1e-9));
+    },
+  );
   test(
     'density scales by hull and surviving crew, bounded at twenty including captain',
     () {
