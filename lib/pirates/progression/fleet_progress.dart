@@ -341,10 +341,28 @@ class EquipmentItem {
         Rarity.values.asNameMap()[rawRarity] ??
             (throw const FormatException('Invalid rarity')),
     };
+    // savedKind's blanket 'equipment' -> Rigging default is only a safe
+    // guess for legacy items with no other information. When a content
+    // id IS present, resolve the item's real current kind from
+    // equipmentContent instead -- otherwise an item that was
+    // reclassified to Reinforcement (Reinforced Keel, Boarding Netting)
+    // fails the integrity check below (its resolved kind wouldn't match
+    // its own definition's kind) and throws, taking down the entire
+    // load/autosave with it.
+    final legacyContentId = j['kind'] == 'equipment' ? j['content'] : null;
+    EquipmentDefinition? legacyDefinition;
+    if (legacyContentId != null) {
+      for (final d in equipmentContent) {
+        if (d.id == legacyContentId) {
+          legacyDefinition = d;
+          break;
+        }
+      }
+    }
     final item = EquipmentItem(
       j['id'],
       j['name'],
-      savedKind(j['kind'], j['specialist']),
+      legacyDefinition?.kind ?? savedKind(j['kind'], j['specialist']),
       hullType: j['hull'],
       rarity: rarity,
       bonus: (j['bonus'] as num).toDouble(),

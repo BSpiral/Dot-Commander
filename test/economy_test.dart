@@ -134,6 +134,58 @@ void main() {
     },
   );
   test(
+    'HOTFIX regression: a pre-2026-09-18 save owning Reinforced Keel or '
+    'Boarding Netting (saved under the old undifferentiated "equipment" '
+    'ItemKind, now split into Rigging/Reinforcement) loads without '
+    'throwing, instead of taking down the whole load/autosave path',
+    () async {
+      String? data;
+      final store = VoyageStore(
+        read: () async => data,
+        write: (s) async {
+          data = s;
+        },
+      );
+      await store.save(createCaribbean());
+      final root = jsonDecode(data!);
+      root['progression']['inventory'] = [
+        {
+          'id': 'item-1',
+          'name': 'Common Reinforced Keel',
+          'kind': 'equipment',
+          'hull': null,
+          'rarity': 'common',
+          'bonus': 0.0,
+          'set': null,
+          'specialist': null,
+          'content': 'keel',
+        },
+        {
+          'id': 'item-2',
+          'name': 'Common Boarding Netting',
+          'kind': 'equipment',
+          'hull': null,
+          'rarity': 'common',
+          'bonus': 0.0,
+          'set': null,
+          'specialist': null,
+          'content': 'netting',
+        },
+      ];
+      root['progression']['nextItem'] = 3;
+      data = jsonEncode(root);
+      final loaded = await store.load();
+      expect(loaded.progress.inventory.length, 2);
+      expect(
+        loaded.progress.inventory.map((i) => i.kind).toSet(),
+        {ItemKind.reinforcement},
+        reason:
+            'both items resolve to their real current kind (Reinforcement), '
+            'not the blanket legacy default (Rigging)',
+      );
+    },
+  );
+  test(
     'every fifth qualifying port visit grants exactly one gem, persists, and does not affect NPCs',
     () async {
       final v = createCaribbean();
