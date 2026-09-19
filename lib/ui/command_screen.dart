@@ -9,6 +9,7 @@ import '../monetization/billing_service.dart';
 import '../monetization/monetization_ids.dart';
 import '../monetization/monetization_store.dart';
 import '../monetization/rewarded_chest_service.dart';
+import '../monetization/rewarded_gold_service.dart';
 import '../pirates/persistence/voyage_store.dart';
 import '../pirates/progression/fleet_progress.dart';
 import '../pirates/world/caribbean.dart';
@@ -45,10 +46,18 @@ class _CommandScreenState extends State<CommandScreen>
       ),
   };
   late final rewardedChestService = RewardedChestService(
-    adsByCategory: {
-      for (final category in ChestCategory.values)
-        category: rewardedAdControllers[category.rewardedAdGroup]!,
+    adsByGroup: {
+      for (final group in RewardedAdGroup.values)
+        group: rewardedAdControllers[group]!,
     },
+    store: monetizationStore,
+  );
+  // Reuses the crewEquipment ad unit -- the freed reward opportunity from
+  // consolidating 5 Common Chest ad rows down to 3 (see
+  // RewardedChestTile/RewardedAdGroup) is presented as this distinct,
+  // non-chest reward rather than a redundant 4th/5th chest path.
+  late final rewardedGoldService = RewardedGoldService(
+    ads: rewardedAdControllers[RewardedAdGroup.crewEquipment]!,
     store: monetizationStore,
   );
   late final billingService = BillingService(store: monetizationStore);
@@ -147,14 +156,32 @@ class _CommandScreenState extends State<CommandScreen>
   /// so the granted item is durably persisted before this call returns --
   /// closing the window where the daily allowance was already consumed
   /// but the resulting chest item had not yet reached disk.
-  Future<void> _grantRewardedChest(ChestCategory category) async {
+  Future<void> _grantRewardedChest(RewardedAdGroup group) async {
+    // A group covering more than one ChestCategory (Crew & Equipment)
+    // grants a roll from a randomly chosen category within it, so every
+    // original category stays obtainable via ads without a dedicated
+    // button each -- see RewardedAdGroupLabel.chestCategories.
+    final categories = group.chestCategories;
+    final category = categories[simulation.rng.nextInt(categories.length)];
     final reward = simulation.openRewardedChest(category);
     setState(() {});
     await _save();
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Received ${reward.name} (${reward.rarity})')),
+      SnackBar(
+        content: Text('Received ${reward.name} (${reward.rarity.label})'),
+      ),
     );
+  }
+
+  Future<void> _grantAdGold() async {
+    final reward = simulation.grantAdGold();
+    setState(() {});
+    await _save();
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('Received $reward coins')));
   }
 
   Future<void> _load() async {
@@ -599,45 +626,42 @@ class _CommandScreenState extends State<CommandScreen>
               style: const TextStyle(color: Colors.amber, fontSize: 11),
             ),
           ),
+        // Roughly half the previous 56px height, and icon-only (no
+        // label) -- the existing icon set already reads fine on its own
+        // (storefront/tree/build/sailing/settings), and the selected
+        // cell's solid background fill still makes the current tab
+        // obvious without needing the text. A Tooltip + Semantics label
+        // keep the name available (long-press / screen reader).
         SizedBox(
-          height: 56,
+          height: 28,
           child: Row(
             children: [
               for (var i = 0; i < 5; i++)
                 Expanded(
-                  child: Semantics(
-                    selected: tab == i,
-                    child: InkWell(
-                      key: Key('tab_${managementLabels[i].toLowerCase()}'),
-                      onTap: () => setState(() => tab = i),
-                      child: Container(
-                        color: tab == i ? const Color(0xff374c4c) : null,
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(
-                              [
-                                Icons.storefront_outlined,
-                                Icons.account_tree_outlined,
-                                Icons.build_outlined,
-                                Icons.sailing_outlined,
-                                Icons.settings_outlined,
-                              ][i],
-                              size: 20,
-                              color: tab == i
-                                  ? const Color(0xffffd78b)
-                                  : Colors.white54,
-                            ),
-                            Text(
-                              managementLabels[i],
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: tab == i
-                                    ? const Color(0xffffd78b)
-                                    : Colors.white70,
-                              ),
-                            ),
-                          ],
+                  child: Tooltip(
+                    message: managementLabels[i],
+                    child: Semantics(
+                      selected: tab == i,
+                      label: managementLabels[i],
+                      child: InkWell(
+                        key: Key('tab_${managementLabels[i].toLowerCase()}'),
+                        onTap: () => setState(() => tab = i),
+                        child: Container(
+                          color: tab == i ? const Color(0xff374c4c) : null,
+                          alignment: Alignment.center,
+                          child: Icon(
+                            [
+                              Icons.storefront_outlined,
+                              Icons.account_tree_outlined,
+                              Icons.build_outlined,
+                              Icons.sailing_outlined,
+                              Icons.settings_outlined,
+                            ][i],
+                            size: 17,
+                            color: tab == i
+                                ? const Color(0xffffd78b)
+                                : Colors.white54,
+                          ),
                         ),
                       ),
                     ),
@@ -681,8 +705,10 @@ class _CommandScreenState extends State<CommandScreen>
             }),
             hasRemoveAds: hasRemoveAds,
             rewardedChests: rewardedChestService,
+            rewardedGold: rewardedGoldService,
             billing: billingService,
             onRewardedChestGranted: _grantRewardedChest,
+            onAdGoldGranted: _grantAdGold,
           ),
         ),
       ],
@@ -777,10 +803,17 @@ class _CommandScreenState extends State<CommandScreen>
                           : Column(
                               children: [
                                 Expanded(child: _map()),
+                                // The map stays the dominant element but
+                                // gives up a modest share of height here
+                                // (.38 -> .48) so the management panel --
+                                // and specifically the Deck tab's ship
+                                // art -- has substantially more room,
+                                // rather than being squeezed into a
+                                // small bottom strip.
                                 SizedBox(
-                                  height: ((c.maxHeight - 80) * .38).clamp(
-                                    170.0,
-                                    370.0,
+                                  height: ((c.maxHeight - 80) * .48).clamp(
+                                    200.0,
+                                    420.0,
                                   ),
                                   child: _management(fleet.length),
                                 ),

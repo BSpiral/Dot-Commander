@@ -57,40 +57,70 @@ const equipmentContent = [
     {'fire': .08},
     shot: 'fire',
   ),
+  // Reinforcement: protective/support equipment (playability pass
+  // 2026-09-18 splits the old single 'equipment' slot into Rigging and
+  // Reinforcement -- see fleet_progress.dart's hullSlots/savedKind).
   EquipmentDefinition(
     'keel',
     'Reinforced Keel',
-    ItemKind.equipment,
+    ItemKind.reinforcement,
     '30% less rigging penalty; +3% Hull protection.',
     {'mitigation': .3, 'defense': .03},
   ),
   EquipmentDefinition(
+    'netting',
+    'Boarding Netting',
+    ItemKind.reinforcement,
+    '15% less Crew damage.',
+    {'crewDefense': .15},
+  ),
+  // Rigging: mobility/structure equipment.
+  EquipmentDefinition(
     'sweeps',
     'Auxiliary Sweeps',
-    ItemKind.equipment,
+    ItemKind.rigging,
     'Movement floor of 65% despite rigging damage.',
     {'minimum': .65},
   ),
   EquipmentDefinition(
-    'netting',
-    'Boarding Netting',
-    ItemKind.equipment,
-    '15% less Crew damage.',
-    {'crewDefense': .15},
-  ),
-  EquipmentDefinition(
     'deck',
     'Flush Deck',
-    ItemKind.equipment,
+    ItemKind.rigging,
     '+8% sailing speed; -4% firepower.',
     {'speed': .08, 'fire': -.04},
   ),
   EquipmentDefinition(
     'gunports',
     'Concealed Gunports',
-    ItemKind.equipment,
+    ItemKind.rigging,
     '+10% opening attack strength.',
     {'opening': .1},
+  ),
+  // Figurehead: one per ship, affects only that ship (see
+  // fleet_progress.dart's UpgradeCategory doc comment). Limited to
+  // effect keys FleetProgress.apply already understands (speed,
+  // economy, opening) rather than inventing morale/aggro/stealth/loot-
+  // proc mechanics the effect system doesn't currently support.
+  EquipmentDefinition(
+    'figurehead_dolphin',
+    'Carved Dolphin Figurehead',
+    ItemKind.figurehead,
+    '+6% sailing speed.',
+    {'speed': .06},
+  ),
+  EquipmentDefinition(
+    'figurehead_lion',
+    'Golden Lion Figurehead',
+    ItemKind.figurehead,
+    '+6% trade/port financial bonus.',
+    {'economy': .06},
+  ),
+  EquipmentDefinition(
+    'figurehead_skull',
+    'Grinning Skull Figurehead',
+    ItemKind.figurehead,
+    '+5% opening attack strength.',
+    {'opening': .05},
   ),
   EquipmentDefinition(
     'cap',

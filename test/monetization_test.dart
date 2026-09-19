@@ -5,7 +5,9 @@ import 'package:dot_commander/main.dart';
 import 'package:dot_commander/monetization/ads_service.dart';
 import 'package:dot_commander/monetization/banner_ad_bar.dart';
 import 'package:dot_commander/monetization/monetization_store.dart';
+import 'package:dot_commander/monetization/monetization_ids.dart';
 import 'package:dot_commander/monetization/rewarded_chest_service.dart';
+import 'package:dot_commander/monetization/rewarded_gold_service.dart';
 import 'package:dot_commander/pirates/persistence/voyage_store.dart';
 import 'package:dot_commander/pirates/progression/fleet_progress.dart';
 import 'package:dot_commander/pirates/world/caribbean.dart';
@@ -178,36 +180,39 @@ void main() {
 
   group('RewardedChestService: Common Chest rewarded-ad opens', () {
     test(
-      'reports capReached without spending an ad impression once a category is exhausted',
+      'reports capReached without spending an ad impression once a group is exhausted',
       () async {
         final store = MonetizationStore(now: () => DateTime.utc(2026, 1, 1));
         const cap = 1;
-        expect(await store.recordRewardedOpen('chest_hull', cap), isTrue);
+        expect(
+          await store.recordRewardedOpen('chest_group_shipCommon', cap),
+          isTrue,
+        );
         final service = RewardedChestService.singleSource(
           ads: RewardedAdController(),
           store: store,
           dailyCap: cap,
         );
         expect(
-          await service.watch(ChestCategory.hull),
+          await service.watch(RewardedAdGroup.shipCommon),
           RewardedChestOutcome.capReached,
         );
       },
     );
 
-    test('reports notAvailable when no ad is loaded and the category has room', () async {
+    test('reports notAvailable when no ad is loaded and the group has room', () async {
       final service = RewardedChestService.singleSource(
         ads: RewardedAdController(),
         store: MonetizationStore(now: () => DateTime.utc(2026, 1, 1)),
       );
       expect(
-        await service.watch(ChestCategory.hull),
+        await service.watch(RewardedAdGroup.shipCommon),
         RewardedChestOutcome.notAvailable,
       );
     });
 
     test(
-      'one chest category reaching its 5/5 cap does not block a different category',
+      'one group reaching its 5/5 cap does not block a different group',
       () async {
         final store = MonetizationStore(now: () => DateTime.utc(2026, 1, 1));
         final service = RewardedChestService.singleSource(
@@ -215,25 +220,51 @@ void main() {
           store: store,
         );
         for (var i = 0; i < Balance.rewardedChestDailyCap; i++) {
-          expect(await store.recordRewardedOpen('chest_hull', 5), isTrue);
+          expect(
+            await store.recordRewardedOpen('chest_group_shipCommon', 5),
+            isTrue,
+          );
         }
-        expect(await service.remainingToday(ChestCategory.hull), 0);
+        expect(await service.remainingToday(RewardedAdGroup.shipCommon), 0);
         expect(
-          await service.watch(ChestCategory.hull),
+          await service.watch(RewardedAdGroup.shipCommon),
           RewardedChestOutcome.capReached,
         );
-        // A completely separate category is still untouched.
-        expect(await service.remainingToday(ChestCategory.cannon), 5);
+        // A completely separate group is still untouched.
         expect(
-          await service.watch(ChestCategory.cannon),
+          await service.remainingToday(RewardedAdGroup.officersCommon),
+          5,
+        );
+        expect(
+          await service.watch(RewardedAdGroup.officersCommon),
           RewardedChestOutcome.notAvailable, // no ad loaded, but NOT capped
         );
       },
     );
 
-    test('every ChestCategory gets its own key/allowance', () {
-      final keys = ChestCategory.values.map((c) => 'chest_${c.name}').toSet();
-      expect(keys.length, ChestCategory.values.length);
+    test('every RewardedAdGroup gets its own key/allowance', () {
+      final keys = RewardedAdGroup.values
+          .map((g) => 'chest_group_${g.name}')
+          .toSet();
+      expect(keys.length, RewardedAdGroup.values.length);
+    });
+
+    test(
+      'every ChestCategory belongs to exactly one RewardedAdGroup, and every group covers at least one category',
+      () {
+        final covered = <ChestCategory>{};
+        for (final group in RewardedAdGroup.values) {
+          expect(group.chestCategories, isNotEmpty);
+          covered.addAll(group.chestCategories);
+        }
+        expect(covered, ChestCategory.values.toSet());
+      },
+    );
+
+    test('exactly three rewarded-ad groups back the Common Chest ad rows', () {
+      // The point of the 2026-09-18 consolidation: 5 near-identical UI
+      // rows became 3, one per real underlying ad unit.
+      expect(RewardedAdGroup.values.length, 3);
     });
 
     test(
@@ -246,10 +277,10 @@ void main() {
           store: store,
         );
         expect(
-          await service.watch(ChestCategory.hull),
+          await service.watch(RewardedAdGroup.shipCommon),
           RewardedChestOutcome.granted,
         );
-        expect(await service.remainingToday(ChestCategory.hull), 4);
+        expect(await service.remainingToday(RewardedAdGroup.shipCommon), 4);
         expect(ads.showCalls, 1);
       },
     );
@@ -266,10 +297,10 @@ void main() {
           store: store,
         );
         expect(
-          await service.watch(ChestCategory.hull),
+          await service.watch(RewardedAdGroup.shipCommon),
           RewardedChestOutcome.dismissedWithoutReward,
         );
-        expect(await service.remainingToday(ChestCategory.hull), 5);
+        expect(await service.remainingToday(RewardedAdGroup.shipCommon), 5);
       },
     );
 
@@ -281,14 +312,14 @@ void main() {
         store: store,
       );
       expect(
-        await service.watch(ChestCategory.hull),
+        await service.watch(RewardedAdGroup.shipCommon),
         RewardedChestOutcome.busy,
       );
-      expect(await service.remainingToday(ChestCategory.hull), 5);
+      expect(await service.remainingToday(RewardedAdGroup.shipCommon), 5);
     });
 
     test(
-      'reaching 5/5 through repeated earned rewards disables only that category',
+      'reaching 5/5 through repeated earned rewards disables only that group',
       () async {
         final ads = _FakeRewardedAdSource(RewardedShowResult.earned);
         final store = MonetizationStore(now: () => DateTime.utc(2026, 1, 1));
@@ -298,65 +329,111 @@ void main() {
         );
         for (var i = 0; i < 5; i++) {
           expect(
-            await service.watch(ChestCategory.hull),
+            await service.watch(RewardedAdGroup.shipCommon),
             RewardedChestOutcome.granted,
           );
         }
         // The 6th watch must not even ask the ad source to show -- the
-        // pre-check short-circuits once the category is capped.
+        // pre-check short-circuits once the group is capped.
         expect(
-          await service.watch(ChestCategory.hull),
+          await service.watch(RewardedAdGroup.shipCommon),
           RewardedChestOutcome.capReached,
         );
         expect(ads.showCalls, 5);
-        // A different category, same shared ad source, is untouched.
+        // A different group, same shared ad source, is untouched.
         expect(
-          await service.watch(ChestCategory.equipment),
+          await service.watch(RewardedAdGroup.crewEquipment),
           RewardedChestOutcome.granted,
         );
-        expect(await service.remainingToday(ChestCategory.equipment), 4);
+        expect(
+          await service.remainingToday(RewardedAdGroup.crewEquipment),
+          4,
+        );
       },
     );
 
     test(
-      'categories sharing the same real AdMob rewarded unit still keep independent daily counters',
+      'groups with independent real ad units keep independent daily counters',
       () async {
-        // Mirrors production: Crew, Equipment and Cannon/Ordnance are all
-        // mapped to the same "Crew/Equipment" ad unit (see
-        // ChestCategoryRewardedGroup), so they share one ad source here.
-        final shared = _FakeRewardedAdSource(RewardedShowResult.earned);
+        final hullAds = _FakeRewardedAdSource(RewardedShowResult.earned);
+        final crewAds = _FakeRewardedAdSource(RewardedShowResult.earned);
         final store = MonetizationStore(now: () => DateTime.utc(2026, 1, 1));
         final service = RewardedChestService(
-          adsByCategory: {
-            ChestCategory.equipment: shared,
-            ChestCategory.crew: shared,
-            ChestCategory.cannon: shared,
-            ChestCategory.hull: _FakeRewardedAdSource(
-              RewardedShowResult.earned,
-            ),
-            ChestCategory.officers: _FakeRewardedAdSource(
+          adsByGroup: {
+            RewardedAdGroup.shipCommon: hullAds,
+            RewardedAdGroup.crewEquipment: crewAds,
+            RewardedAdGroup.officersCommon: _FakeRewardedAdSource(
               RewardedShowResult.earned,
             ),
           },
           store: store,
         );
         expect(
-          await service.watch(ChestCategory.equipment),
+          await service.watch(RewardedAdGroup.shipCommon),
           RewardedChestOutcome.granted,
         );
+        expect(await service.remainingToday(RewardedAdGroup.shipCommon), 4);
+        // A different group, never watched, is untouched.
         expect(
-          await service.watch(ChestCategory.crew),
-          RewardedChestOutcome.granted,
+          await service.remainingToday(RewardedAdGroup.crewEquipment),
+          5,
         );
-        expect(await service.remainingToday(ChestCategory.equipment), 4);
-        expect(await service.remainingToday(ChestCategory.crew), 4);
-        // Cannon shares the same ad source/unit but was never watched --
-        // its allowance is untouched, proving the shared ad unit did not
-        // combine or pre-spend anyone's daily cap.
-        expect(await service.remainingToday(ChestCategory.cannon), 5);
-        expect(shared.showCalls, 2);
+        expect(hullAds.showCalls, 1);
+        expect(crewAds.showCalls, 0);
       },
     );
+  });
+
+  group('RewardedGoldService: the "watch an ad for gold" reward', () {
+    test('an earned reward grants exactly once and consumes exactly one allowance', () async {
+      final ads = _FakeRewardedAdSource(RewardedShowResult.earned);
+      final store = MonetizationStore(now: () => DateTime.utc(2026, 1, 1));
+      final service = RewardedGoldService(ads: ads, store: store);
+      expect(await service.watch(), RewardedGoldOutcome.granted);
+      expect(await service.remainingToday(), 4);
+      expect(ads.showCalls, 1);
+    });
+
+    test('reports capReached without spending an ad impression once exhausted', () async {
+      final store = MonetizationStore(now: () => DateTime.utc(2026, 1, 1));
+      const cap = 1;
+      expect(await store.recordRewardedOpen('ad_gold', cap), isTrue);
+      final service = RewardedGoldService(
+        ads: RewardedAdController(),
+        store: store,
+        dailyCap: cap,
+      );
+      expect(await service.watch(), RewardedGoldOutcome.capReached);
+    });
+
+    test('does not share an allowance with any chest group', () async {
+      final ads = _FakeRewardedAdSource(RewardedShowResult.earned);
+      final store = MonetizationStore(now: () => DateTime.utc(2026, 1, 1));
+      final gold = RewardedGoldService(ads: ads, store: store);
+      final chests = RewardedChestService.singleSource(ads: ads, store: store);
+      expect(await gold.watch(), RewardedGoldOutcome.granted);
+      expect(await store.remainingRewardedOpensToday('ad_gold', 5), 4);
+      expect(
+        await chests.remainingToday(RewardedAdGroup.shipCommon),
+        5, // untouched by the gold grant
+      );
+    });
+  });
+
+  group('PiratesVoyage.grantAdGold', () {
+    test('adds coins scaled by the existing offline-earning formula, not a hardcoded amount', () {
+      final voyage = createCaribbean();
+      voyage.progress.tree[FleetTrack.offline] = 50;
+      final before = voyage.coins;
+      final reward = voyage.grantAdGold();
+      expect(reward, Balance.offlineRewardCoins(50, 60));
+      expect(voyage.coins, before + reward);
+      // A higher offline tree level yields a strictly larger reward --
+      // proving this scales with progression rather than being fixed.
+      voyage.progress.tree[FleetTrack.offline] = 500;
+      final higherReward = voyage.grantAdGold();
+      expect(higherReward, greaterThan(reward));
+    });
   });
 
   group('Voyage reset must never touch monetization state', () {
@@ -427,10 +504,11 @@ void main() {
     );
   });
 
-  group('Shop tab: rewarded Common Chest rows', () {
+  group('Shop tab: rewarded Common Chest + gold rows', () {
     testWidgets(
-      'one "watch an ad" row per Common chest category, none for Rare, '
-      'each showing its own 5/5 remaining-today count',
+      'one "watch an ad" row per RewardedAdGroup (3, down from the old '
+      '5-per-category layout), none for Rare, each showing its own 5/5 '
+      'remaining-today count',
       (tester) async {
         final voyage = createCaribbean();
         final service = RewardedChestService.singleSource(
@@ -454,33 +532,26 @@ void main() {
           ),
         );
         await tester.pump();
-        for (final category in ChestCategory.values) {
+        for (final group in RewardedAdGroup.values) {
           expect(
-            find.byKey(Key('watch_chest_ad_${category.name}')),
+            find.byKey(Key('watch_chest_ad_${group.name}')),
             findsOneWidget,
           );
         }
-        // Rare chests never get a rewarded-ad row.
-        expect(find.textContaining('open a Common'), findsNWidgets(5));
+        // Rare chests never get a rewarded-ad row; no gold row was wired
+        // in this test, so exactly 3 "open a Common" rows.
+        expect(find.textContaining('open a Common'), findsNWidgets(3));
         expect(
           find.textContaining('${Balance.rewardedChestDailyCap}/${Balance.rewardedChestDailyCap} remaining today'),
-          findsNWidgets(5),
+          findsNWidgets(3),
         );
       },
     );
 
     testWidgets(
-      'a granted reward calls onRewardedChestGranted with the right category',
+      'the gold row appears alongside the 3 chest rows when wired, and grants via onAdGoldGranted',
       (tester) async {
-        // Simulate "already earned, allowance available" by using a
-        // service backed by a controller that will report notAvailable
-        // (no loaded ad) -- this test instead verifies the wiring by
-        // invoking the panel's callback path directly through the
-        // service contract rather than a real ad, since the SDK cannot
-        // be driven to "earned" from a widget test. The store-level and
-        // service-level tests above already prove the cap/earn logic;
-        // this proves the UI is wired to the right category per row.
-        ChestCategory? granted;
+        var goldGranted = false;
         final voyage = createCaribbean();
         await tester.pumpWidget(
           MaterialApp(
@@ -495,8 +566,13 @@ void main() {
                     ads: RewardedAdController(),
                     store: MonetizationStore(now: () => DateTime.utc(2026, 1, 1)),
                   ),
-                  onRewardedChestGranted: (category) async {
-                    granted = category;
+                  rewardedGold: RewardedGoldService(
+                    ads: RewardedAdController(),
+                    store: MonetizationStore(now: () => DateTime.utc(2026, 1, 1)),
+                  ),
+                  onRewardedChestGranted: (_) async {},
+                  onAdGoldGranted: () async {
+                    goldGranted = true;
                   },
                 ),
               ),
@@ -504,7 +580,50 @@ void main() {
           ),
         );
         await tester.pump();
-        final button = find.byKey(const Key('watch_chest_ad_cannon'));
+        expect(find.byKey(const Key('watch_gold_ad')), findsOneWidget);
+        expect(find.textContaining('open a Common'), findsNWidgets(3));
+        expect(goldGranted, isFalse); // not tapped yet
+      },
+    );
+
+    testWidgets(
+      'a granted reward calls onRewardedChestGranted with the right group',
+      (tester) async {
+        // Simulate "already earned, allowance available" by using a
+        // service backed by a controller that will report notAvailable
+        // (no loaded ad) -- this test instead verifies the wiring by
+        // invoking the panel's callback path directly through the
+        // service contract rather than a real ad, since the SDK cannot
+        // be driven to "earned" from a widget test. The store-level and
+        // service-level tests above already prove the cap/earn logic;
+        // this proves the UI is wired to the right group per row.
+        RewardedAdGroup? granted;
+        final voyage = createCaribbean();
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SingleChildScrollView(
+                child: ProgressionPanel(
+                  voyage: voyage,
+                  ship: voyage.ships.first,
+                  tab: 0,
+                  changed: () {},
+                  rewardedChests: RewardedChestService.singleSource(
+                    ads: RewardedAdController(),
+                    store: MonetizationStore(now: () => DateTime.utc(2026, 1, 1)),
+                  ),
+                  onRewardedChestGranted: (group) async {
+                    granted = group;
+                  },
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+        final button = find.byKey(
+          Key('watch_chest_ad_${RewardedAdGroup.crewEquipment.name}'),
+        );
         await tester.ensureVisible(button);
         await tester.pump();
         await tester.tap(button);
@@ -545,9 +664,9 @@ void main() {
           ),
         );
         await tester.pump();
-        for (final category in ChestCategory.values) {
+        for (final group in RewardedAdGroup.values) {
           expect(
-            find.byKey(Key('watch_chest_ad_${category.name}')),
+            find.byKey(Key('watch_chest_ad_${group.name}')),
             findsOneWidget,
           );
         }

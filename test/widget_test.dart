@@ -86,13 +86,13 @@ void main() {
           management.height /
               (management.height +
                   tester.getSize(find.byKey(const Key('living_map'))).height),
-          // Upper bound widened from .40: the permanent ad bar
-          // (BannerAdBar, monetization pass) reserves a fixed 56px strip
-          // below the map on portrait phones, which the living map cedes
-          // (management keeps its own designed height/ratio unchanged) --
-          // shifting this measured ratio up slightly without changing the
-          // management panel's actual on-screen size or usability.
-          inInclusiveRange(.35, .44),
+          // Range raised again (playability pass 2026-09-18): the
+          // management panel's height share was deliberately increased
+          // (.38 -> .48 of available height, see command_screen.dart) so
+          // the Deck tab has substantially more room, per real playtest
+          // feedback that it was being squeezed into too small a strip.
+          // The map still gets the majority of the screen.
+          inInclusiveRange(.48, .58),
         );
       }
       for (var i = 0; i < 5; i++) {
@@ -209,7 +209,12 @@ void main() {
     );
     await tester.pumpWidget(DotCommanderApp(store: store));
     await tester.pump(const Duration(milliseconds: 100));
-    expect(find.text('Brine Runner'), findsWidgets);
+    // Not necessarily an exact standalone "Brine Runner" text widget
+    // anymore -- the default tab (Deck) now folds the ship name into a
+    // single compact status line ("Brine Runner • ...", see
+    // management_panel.dart) rather than a separate header Text, as part
+    // of reclaiming vertical space for the ship art itself.
+    expect(find.textContaining('Brine Runner'), findsWidgets);
     expect(find.textContaining('explorer • Brine Runner'), findsOneWidget);
     await tester.pump(const Duration(seconds: 5));
     await tester.pump();

@@ -29,28 +29,36 @@ BattleScript scriptForResult(EncounterResult r) {
   return BattleScript(
     id: r.id,
     ending: end,
+    // Opening pose is deliberately much further apart than the previous
+    // .23/.77 (a bare .54 gap) -- the target should read as a distant
+    // sighting first (also drawn smaller; see TheaterPainter's
+    // distance-based opponent scale), then visibly close as the
+    // already-decided encounter proceeds toward cannon range and
+    // boarding, per "As the simulation says we close distance, visually
+    // bring the ships closer." Only positions changed below; timings,
+    // phases, damage and ending logic are untouched.
     frames: [
       TheaterKeyframe(
         seconds: 0,
         phase: TheaterPhase.encounter,
-        player: const DeckPose(.5, .23),
-        opponent: const DeckPose(.5, .77),
+        player: const DeckPose(.5, .08),
+        opponent: const DeckPose(.5, .92),
         playerDamage: state(r.a, 0, 0),
         opponentDamage: state(r.b, 0, 0),
       ),
       TheaterKeyframe(
         seconds: 2,
         phase: TheaterPhase.maneuver,
-        player: const DeckPose(.5, .25),
-        opponent: const DeckPose(.5, .75),
+        player: const DeckPose(.5, .14),
+        opponent: const DeckPose(.5, .86),
         playerDamage: state(r.a, 0, 0),
         opponentDamage: state(r.b, 0, 0),
       ),
       TheaterKeyframe(
         seconds: 4,
         phase: TheaterPhase.cannon,
-        player: const DeckPose(.5, .26),
-        opponent: const DeckPose(.5, .74),
+        player: const DeckPose(.5, .2),
+        opponent: const DeckPose(.5, .8),
         playerDamage: state(r.a, 0, 0),
         opponentDamage: state(r.b, 0, 0),
       ),

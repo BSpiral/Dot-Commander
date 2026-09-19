@@ -58,19 +58,39 @@ class TheaterPainter extends CustomPainter {
     this.crewA,
     this.crewB,
   );
-  Rect _deck(Size size, DeckPose pose) => Rect.fromCenter(
+  // Ship rect is drawn ~20% smaller than the full stage (.9 -> .72 width
+  // fraction) so more of the surrounding deck/activity space is visible
+  // around it at once, while the stage's own AspectRatio (and therefore
+  // its total on-screen size) is unchanged -- see DeckTheater.build.
+  Rect _deck(Size size, DeckPose pose, {double scale = 1}) => Rect.fromCenter(
     center: Offset(pose.x * size.width, pose.y * size.height),
-    width: size.width * .9,
-    height: script == null
-        ? size.width * .9 / 3.8
-        : math.min(size.width * .9 / 6.4, size.height * .27),
+    width: size.width * .72 * scale,
+    height:
+        (script == null
+            ? size.width * .72 / 3.8
+            : math.min(size.width * .72 / 6.4, size.height * .27)) *
+        scale,
   );
   @override
   void paint(Canvas canvas, Size size) {
     final sample = script?.sample(seconds);
     final a = _deck(size, sample?.player ?? const DeckPose(.5, .5));
     final da = sample?.playerDamage ?? TheaterDamage(hull: damage.clamp(0, 1));
-    final b = sample == null ? null : _deck(size, sample.opponent);
+    // The opponent starts far off (see result_script.dart's amplified
+    // opening gap) and should read as small/distant at first, then
+    // visibly grow as the already-decided encounter closes toward
+    // cannon range/boarding -- purely a cosmetic size ramp keyed off
+    // the current player/opponent pose gap, not a new distance
+    // simulation. Player scale is left at 1 (our own ship never shrinks).
+    final gap = sample == null
+        ? 0.0
+        : (sample.opponent.y - sample.player.y).abs();
+    final opponentScale = sample == null
+        ? 1.0
+        : (0.55 + 0.45 * ((0.84 - gap) / (0.84 - 0.36)).clamp(0.0, 1.0));
+    final b = sample == null
+        ? null
+        : _deck(size, sample.opponent, scale: opponentScale);
     if (b != null && sample != null) {
       for (final x in DeckGeometry.stations(sample.planks)) {
         canvas.drawLine(
@@ -237,6 +257,21 @@ class TheaterPainter extends CustomPainter {
     }
   }
 
+  // Five slightly different colors for indices 0-4 so a viewer can pick
+  // the ship's officers out from ordinary crew at a glance. Index 0 keeps
+  // its existing gold captain ring; the other four are new. These are the
+  // SAME representative dots used everywhere else (idle and combat) --
+  // no separate officer entities or data model, just a color lookup by
+  // index, matching "use the same actual crew through normal operation
+  // and combat" rather than a fake dedicated combat roster.
+  static const _officerColors = [
+    Color(0xffffd37a), // captain (unchanged)
+    Color(0xffb79bff), // quartermaster
+    Color(0xff7ec8ff), // bosun
+    Color(0xffef9c6a), // carpenter
+    Color(0xff8ef58a), // navigator
+  ];
+
   void _crew(
     Canvas c,
     Rect home,
@@ -256,17 +291,43 @@ class TheaterPainter extends CustomPainter {
         home.left + home.width * (.12 + .72 * (i ~/ rows + .5) / columns),
         home.center.dy + ((i % rows) - (rows - 1) / 2) * home.height * .24,
       );
-      if (enemy != null && planks > 0 && i > 0 && i.isOdd) {
-        final lane = DeckGeometry.stations(planks)[i % planks];
+      final crossingNow = enemy != null && planks > 0 && i > 0 && i.isOdd;
+      if (!crossingNow) {
+        // Ordinary sailing/trading/exploring is still visually alive:
+        // a small per-dot wander (own speed/phase from its index, so
+        // dots don't move in lockstep) around its work position --
+        // believable ambient activity, not a real position/pathing
+        // simulation. Also runs during pre-boarding combat phases
+        // (encounter/maneuver/cannon), where crew are at their posts.
+        final phase = i * 1.9;
+        final speed = .3 + (i % 4) * .07;
+        p = p.translate(
+          math.sin(seconds * speed + phase) * home.width * .06,
+          math.cos(seconds * speed * .8 + phase * 1.4) * home.height * .12,
+        );
+      }
+      if (crossingNow) {
+        final laneIndex = i % planks;
+        final lane = DeckGeometry.stations(planks)[laneIndex];
+        // Multiple crew sharing one lane (the common case: most hulls
+        // have only 1-2 planks) must not perfectly overlap or collapse
+        // into a single dot once aboard -- a small deterministic
+        // per-dot jitter spreads them within the lane, and a per-dot
+        // progress delay staggers the crossing itself so they visibly
+        // queue/spread rather than teleporting together in lockstep.
+        final jitter = (((i * 37) % 11) - 5) / 5.0 * .12;
+        final rank = i ~/ planks;
+        final personalDelay = (rank % 4) * .05;
         final bridge = Offset(
-          home.center.dx + lane * home.width,
+          home.center.dx + (lane + jitter) * home.width,
           (home.center.dy + enemy.center.dy) / 2,
         );
         final target = Offset(
-          enemy.center.dx + lane * enemy.width,
-          enemy.center.dy,
+          enemy.center.dx + (lane + jitter) * enemy.width,
+          enemy.center.dy + ((rank % 3) - 1) * enemy.height * .18,
         );
-        final t = winner ? crossing : math.min(crossing, .55);
+        final personalCrossing = (crossing - personalDelay).clamp(0.0, 1.0);
+        final t = winner ? personalCrossing : math.min(personalCrossing, .55);
         p = t < .5
             ? Offset.lerp(p, bridge, t * 2)!
             : Offset.lerp(bridge, target, (t - .5) * 2)!;
@@ -275,8 +336,8 @@ class TheaterPainter extends CustomPainter {
         p,
         count > 7 ? 2.1 : 2.7,
         Paint()
-          ..color = i == 0
-              ? const Color(0xffffd37a)
+          ..color = i < _officerColors.length
+              ? _officerColors[i]
               : owned
               ? const Color(0xff84d8d1)
               : const Color(0xffe7a59b),

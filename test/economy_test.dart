@@ -70,8 +70,20 @@ void main() {
             expect(category.accepts(item.kind), isTrue);
             expect(before - v.gems, rarity == ChestKind.common ? 10 : 50);
           }
-          final a = v.openChest(rarity, category: category, random: Random(9))!;
-          final b = v.openChest(rarity, category: category, random: Random(9))!;
+          // Same-seed determinism is checked on a FRESH voyage (no prior
+          // inventory), not the one that just accumulated 100 items above
+          // -- auto-merge (mergeDuplicates) means roll()'s returned item
+          // can legitimately differ between two otherwise-identical seeds
+          // once enough matching duplicates already exist in inventory,
+          // so that accumulated state is not a fair determinism check.
+          // Both rolls share ONE fresh voyage (so their ids come from the
+          // same counter and are genuinely comparable), each with its own
+          // independent Random(9) -- proving the SAME seed reproduces the
+          // same roll content while still being two distinct physical
+          // copies (different ids).
+          final fresh = createCaribbean()..gems = 100000;
+          final a = fresh.openChest(rarity, category: category, random: Random(9))!;
+          final b = fresh.openChest(rarity, category: category, random: Random(9))!;
           expect(a.name, b.name);
           expect(a.id, isNot(b.id));
         }

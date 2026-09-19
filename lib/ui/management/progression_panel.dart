@@ -1,10 +1,14 @@
+import '../../monetization/monetization_ids.dart';
 import '../../monetization/rewarded_chest_service.dart';
+import '../../monetization/rewarded_gold_service.dart';
 import '../../pirates/progression/life_balance.dart';
 import 'package:flutter/material.dart';
 import '../../pirates/progression/fleet_progress.dart';
 import '../../pirates/encounters/pirates_voyage.dart';
 import '../../core/simulation/vessel.dart';
 import 'rewarded_chest_tile.dart';
+import 'rewarded_gold_tile.dart';
+import 'upgrades_panel.dart';
 
 class ProgressionPanel extends StatelessWidget {
   final PiratesVoyage voyage;
@@ -12,7 +16,9 @@ class ProgressionPanel extends StatelessWidget {
   final int tab;
   final VoidCallback changed;
   final RewardedChestService? rewardedChests;
-  final Future<void> Function(ChestCategory category)? onRewardedChestGranted;
+  final RewardedGoldService? rewardedGold;
+  final Future<void> Function(RewardedAdGroup group)? onRewardedChestGranted;
+  final Future<void> Function()? onAdGoldGranted;
   const ProgressionPanel({
     super.key,
     required this.voyage,
@@ -20,7 +26,9 @@ class ProgressionPanel extends StatelessWidget {
     required this.tab,
     required this.changed,
     this.rewardedChests,
+    this.rewardedGold,
     this.onRewardedChestGranted,
+    this.onAdGoldGranted,
   });
   @override
   Widget build(BuildContext context) {
@@ -72,7 +80,7 @@ class ProgressionPanel extends StatelessWidget {
           widgets.add(
             row(
               '${kind.name == 'common' ? 'Common' : 'Rare'} ${category.label} Chest',
-              '${category.label} only. Duplicate copies are kept.',
+              '${category.label} only. Duplicate copies stack and auto-upgrade (5 -> next rarity, up to Rare).',
               '${Balance.chestCosts[kind]} gems',
               voyage.gems >= Balance.chestCosts[kind]!
                   ? () => action(() {
@@ -81,7 +89,7 @@ class ProgressionPanel extends StatelessWidget {
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
                             content: Text(
-                              'Received ${reward.name} (${reward.rarity})',
+                              'Received ${reward.name} (${reward.rarity.label})',
                             ),
                           ),
                         );
@@ -91,22 +99,30 @@ class ProgressionPanel extends StatelessWidget {
               key: Key('chest_${category.name}_${kind.name}'),
             ),
           );
-          // Common Chests only: an additional, entirely voluntary way to
-          // open one -- watch a rewarded ad instead of spending gems.
-          // Each category has its own independent 5/day allowance (see
-          // RewardedChestService); Rare chests stay gem-only.
-          if (kind == ChestKind.common &&
-              rewardedChests != null &&
-              onRewardedChestGranted != null) {
-            widgets.add(
-              RewardedChestTile(
-                service: rewardedChests!,
-                category: category,
-                onGranted: onRewardedChestGranted!,
-              ),
-            );
-          }
         }
+      }
+      // Rewarded-ad rows: exactly 3 (one per real ad unit -- see
+      // RewardedAdGroup), plus a 4th, genuinely different reward (gold)
+      // in the slot that used to be a near-identical chest path.
+      if (rewardedChests != null && onRewardedChestGranted != null) {
+        for (final group in RewardedAdGroup.values) {
+          widgets.add(
+            RewardedChestTile(
+              service: rewardedChests!,
+              group: group,
+              onGranted: onRewardedChestGranted!,
+            ),
+          );
+        }
+      }
+      if (rewardedGold != null && onAdGoldGranted != null) {
+        widgets.add(
+          RewardedGoldTile(
+            service: rewardedGold!,
+            goldPreview: Balance.adGoldReward(p.tree[FleetTrack.offline] ?? 0),
+            onGranted: onAdGoldGranted!,
+          ),
+        );
       }
       for (final id in p.lastRewards) {
         final item = p.item(id)!;
@@ -114,7 +130,7 @@ class ProgressionPanel extends StatelessWidget {
           ListTile(
             title: Text('Received: ${item.name}'),
             subtitle: Text(
-              '${item.rarity} • ${item.kind.name} • $id\nEquip in Upgrades',
+              '${item.rarity.label} • ${item.kind.name} • $id\nEquip in Upgrades',
             ),
           ),
         );
@@ -188,139 +204,10 @@ class ProgressionPanel extends StatelessWidget {
         );
       }
     } else {
-      if (c == null) {
-        widgets.add(
-          const ListTile(title: Text('Select your command to equip items.')),
-        );
-      } else {
-        widgets.add(
-          ListTile(
-            title: Text(
-              '${ship.name} • ${ship.hullType} • CP ${p.combatPower(ship).toStringAsFixed(1)}',
-            ),
-            subtitle: Text(
-              voyage.busy(ship.id)
-                  ? 'Equipment locked during battle.'
-                  : 'Hull changes preserve damage percentage and Tree.',
-            ),
-          ),
-        );
-        // Grouped by the same five categories the Shop's Common/Rare
-        // Chests already use (ChestCategory) -- one clearly-headed section
-        // per category, in slot order within it, so equipped/empty state
-        // reads at a glance instead of one flat undifferentiated list.
-        const sectionOrder = [
-          ChestCategory.hull,
-          ChestCategory.cannon,
-          ChestCategory.equipment,
-          ChestCategory.crew,
-          ChestCategory.officers,
-        ];
-        for (final category in sectionOrder) {
-          final kinds = ItemKind.values.where(category.accepts);
-          widgets.add(
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 14, 16, 2),
-              child: Text(
-                category.label,
-                style: const TextStyle(
-                  color: Color(0xffddbe7c),
-                  fontWeight: FontWeight.bold,
-                  fontSize: 13,
-                ),
-              ),
-            ),
-          );
-          for (final kind in kinds) {
-            final current = p.item(c.equipped[kind]);
-            final isDefaultHull = kind == ItemKind.hull && current == null;
-            widgets.add(
-              ListTile(
-                dense: true,
-                leading: Icon(
-                  current != null || isDefaultHull
-                      ? Icons.check_circle
-                      : Icons.circle_outlined,
-                  color: current != null || isDefaultHull
-                      ? const Color(0xff8fd19e)
-                      : Colors.white38,
-                  size: 20,
-                ),
-                title: Text(_slotLabel(kind)),
-                subtitle: Text(
-                  current?.name ??
-                      (isDefaultHull
-                          ? 'Basic Sloop (default, not an inventory item)'
-                          : 'EMPTY — unequipped'),
-                  style: current == null && !isDefaultHull
-                      ? const TextStyle(
-                          color: Colors.white38,
-                          fontStyle: FontStyle.italic,
-                        )
-                      : null,
-                ),
-                trailing: TextButton(
-                  key: Key('unequip_${kind.name}'),
-                  onPressed: current != null && !voyage.busy(ship.id)
-                      ? () => action(() {
-                          voyage.equip(ship.id, kind, null);
-                        })
-                      : null,
-                  child: const Text('Unequip'),
-                ),
-              ),
-            );
-            for (final item in p.inventory.where((i) => i.kind == kind)) {
-              final owner = p.assignedTo(item.id),
-                  equipped = current?.id == item.id;
-              widgets.add(
-                Padding(
-                  padding: const EdgeInsets.only(left: 12),
-                  child: row(
-                    item.name,
-                    '${item.description}\n${item.rarity} • ${item.id}${owner == null ? '' : ' • on ${voyage.ships.firstWhere((s) => s.id == owner).name}'}',
-                    equipped ? 'Equipped' : 'Equip',
-                    !equipped && owner == null && !voyage.busy(ship.id)
-                        ? () => action(() {
-                            voyage.equip(ship.id, kind, item.id);
-                          })
-                        : null,
-                    key: Key('equip_${item.id}'),
-                  ),
-                ),
-              );
-            }
-          }
-        }
-        if (p.inventory.isEmpty) {
-          widgets.add(
-            const ListTile(
-              title: Text('No equipment yet'),
-              subtitle: Text('Open a chest in Shop to obtain your first item.'),
-            ),
-          );
-        }
-      }
+      // Upgrades (tab 2): relevance-first category/slot navigation (see
+      // UpgradesPanel) rather than a flat five-section item dump.
+      widgets.add(UpgradesPanel(voyage: voyage, ship: ship, changed: changed));
     }
     return Column(children: widgets);
   }
 }
-
-/// Human-readable slot name for an equipment section row. Section headers
-/// already establish the category (Hull/Ordnance/Equipment/Crew/Officers),
-/// so this only needs to name the individual slot within it.
-String _slotLabel(ItemKind kind) => switch (kind) {
-  ItemKind.hull => 'Hull',
-  ItemKind.cannon => 'Ordnance',
-  ItemKind.equipment => 'Ship Equipment',
-  ItemKind.head => 'Head',
-  ItemKind.body => 'Body',
-  ItemKind.hands => 'Hands',
-  ItemKind.legs => 'Legs',
-  ItemKind.weapon => 'Weapon',
-  ItemKind.captain => 'Captain',
-  ItemKind.quartermaster => 'Quartermaster',
-  ItemKind.bosun => 'Bosun',
-  ItemKind.carpenter => 'Carpenter',
-  ItemKind.navigator => 'Navigator',
-};

@@ -167,6 +167,7 @@ void main() {
           ChestKind.common,
           Random(seed),
           category: ChestCategory.hull,
+          source: RollSource.paidCommon,
         );
         if (item.hullType == 'Sloop') {
           hull = item;

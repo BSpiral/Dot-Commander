@@ -78,7 +78,42 @@ abstract final class MonetizationIds {
 /// Which of Dot Commander's three real rewarded ad units backs a Common
 /// Chest category's rewarded-ad opening route. Named after the AdMob
 /// console labels for those units.
+///
+/// Playability pass 2026-09-18: this is now also the player-facing unit
+/// for Common Chest AD REWARDS -- previously there were 5 separate "watch
+/// an ad" rows (one per ChestCategory, all funneling into these same 3
+/// underlying ad units), which read as one confusing/redundant 4th-ish
+/// option. There are now exactly 3 "watch an ad to open a Common Chest"
+/// rows, one per group below (see RewardedChestTile/RewardedChestService),
+/// each granting a roll from a RANDOMLY chosen category within that group
+/// (see chestCategories) so every original ChestCategory remains
+/// obtainable via ads, just without a dedicated button each. The freed
+/// 4th/5th row is now a distinct "watch an ad for gold" reward instead
+/// (see RewardedGoldService) -- a genuinely different reward, not another
+/// near-identical chest path. Paid gem-purchase chests (Shop tab) are
+/// unaffected and still offer all 5 ChestCategory values individually.
 enum RewardedAdGroup { shipCommon, crewEquipment, officersCommon }
+
+extension RewardedAdGroupLabel on RewardedAdGroup {
+  String get label => switch (this) {
+    RewardedAdGroup.shipCommon => 'Ship',
+    RewardedAdGroup.crewEquipment => 'Crew & Equipment',
+    RewardedAdGroup.officersCommon => 'Officers',
+  };
+
+  /// The ChestCategory values this ad group grants access to -- inverse
+  /// of ChestCategoryRewardedGroup below. A watched ad for this group
+  /// rolls a Common Chest from one of these, chosen at random.
+  List<ChestCategory> get chestCategories => switch (this) {
+    RewardedAdGroup.shipCommon => const [ChestCategory.hull],
+    RewardedAdGroup.crewEquipment => const [
+      ChestCategory.equipment,
+      ChestCategory.crew,
+      ChestCategory.cannon,
+    ],
+    RewardedAdGroup.officersCommon => const [ChestCategory.officers],
+  };
+}
 
 extension ChestCategoryRewardedGroup on ChestCategory {
   RewardedAdGroup get rewardedAdGroup => switch (this) {

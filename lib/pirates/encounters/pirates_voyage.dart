@@ -97,7 +97,14 @@ class PiratesVoyage extends Simulation {
     final cost = Balance.chestCosts[kind]!;
     if (gems < cost) return null;
     gems -= cost;
-    final reward = progress.roll(kind, random ?? rng, category: category);
+    final reward = progress.roll(
+      kind,
+      random ?? rng,
+      category: category,
+      source: kind == ChestKind.common
+          ? RollSource.paidCommon
+          : RollSource.paidRare,
+    );
     revision++;
     return reward;
   }
@@ -115,7 +122,20 @@ class PiratesVoyage extends Simulation {
       ChestKind.common,
       random ?? rng,
       category: category,
+      source: RollSource.adCommon,
     );
+    revision++;
+    return reward;
+  }
+
+  /// The "watch an ad for gold" reward (playability pass 2026-09-18,
+  /// replacing a redundant near-identical 4th/5th Common Chest ad
+  /// category -- see RewardedChestService.watchGold). Gold only, no
+  /// item roll; not tied to any ChestCategory since it grants no
+  /// equipment.
+  int grantAdGold() {
+    final reward = Balance.adGoldReward(progress.tree[FleetTrack.offline] ?? 0);
+    coins += reward;
     revision++;
     return reward;
   }
@@ -399,6 +419,7 @@ class PiratesVoyage extends Simulation {
           bonus: 0,
         );
         progress.inventory.add(prize);
+        progress.mergeDuplicates();
         life.log(
           ships.firstWhere((s) => s.id == winner.id),
           'Captured ${loser.hullType}; available in Upgrades',

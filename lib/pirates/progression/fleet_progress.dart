@@ -10,8 +10,10 @@ enum FleetTrack { portFavor, offline }
 
 enum ItemKind {
   hull,
-  equipment,
   cannon,
+  rigging,
+  reinforcement,
+  figurehead,
   head,
   body,
   hands,
@@ -38,8 +40,30 @@ const officerSlots = [
   ItemKind.carpenter,
   ItemKind.navigator,
 ];
+// Hull's five upgrade slots (playability pass 2026-09-18): the ship
+// itself, its cannons, and three new equipment slots that used to be
+// one undifferentiated 'equipment' ItemKind -- see savedKind's legacy
+// mapping below for how existing saves carry forward.
+const hullSlots = [
+  ItemKind.hull,
+  ItemKind.cannon,
+  ItemKind.rigging,
+  ItemKind.reinforcement,
+  ItemKind.figurehead,
+];
 ItemKind savedKind(String name, [String? specialist]) => switch (name) {
   'gear' => ItemKind.body,
+  // Pre-2026-09-18 saves store the old undifferentiated ship-equipment
+  // slot as 'equipment'. Every existing item under it (Reinforced Keel,
+  // Auxiliary Sweeps, Boarding Netting, Flush Deck, Concealed Gunports)
+  // is reclassified into either Rigging or Reinforcement going forward
+  // (see equipment_content.dart) -- but an old item object itself only
+  // carries the slot name, not which new bucket it belongs in, so this
+  // maps it to Rigging as a safe default; ItemKind is purely a slot tag
+  // (compatibility/equip-eligibility), never gameplay math, so an old
+  // save landing an already-owned Boarding Netting under Rigging instead
+  // of Reinforcement costs the player nothing beyond a relabeled slot.
+  'equipment' => ItemKind.rigging,
   'officer' =>
     specialist == 'carpenter'
         ? ItemKind.carpenter
@@ -56,7 +80,16 @@ enum ChestCategory { hull, equipment, crew, cannon, officers }
 extension ChestCategoryContent on ChestCategory {
   bool accepts(ItemKind kind) => switch (this) {
     ChestCategory.hull => kind == ItemKind.hull,
-    ChestCategory.equipment => kind == ItemKind.equipment,
+    // Rigging/Reinforcement/Figurehead are new sub-slots of what used to
+    // be the single 'equipment' ItemKind; they all still come from the
+    // same "Equipment" paid/ad chest category as before, so the Shop's
+    // chest-buying UI keeps exactly the same 5 categories/10 rows it had
+    // -- this pass reorganizes the UPGRADES page (see UpgradeCategory
+    // below), not chest purchasing, which is out of scope.
+    ChestCategory.equipment =>
+      kind == ItemKind.rigging ||
+          kind == ItemKind.reinforcement ||
+          kind == ItemKind.figurehead,
     ChestCategory.cannon => kind == ItemKind.cannon,
     ChestCategory.crew => crewSlots.contains(kind),
     ChestCategory.officers => officerSlots.contains(kind),
@@ -69,6 +102,93 @@ extension ChestCategoryContent on ChestCategory {
     ChestCategory.officers => 'Officers',
   };
 }
+
+/// The Upgrades page's three top-level equipment categories (playability
+/// pass 2026-09-18) -- deliberately a SEPARATE, smaller grouping from
+/// ChestCategory above: chest purchasing is unchanged/out of scope, but
+/// the Upgrades screen itself should show three focused categories plus
+/// a distinct Inventory browse, not a flat five-section item dump.
+enum UpgradeCategory { hull, officer, crewEquipment }
+
+extension UpgradeCategorySlots on UpgradeCategory {
+  List<ItemKind> get slots => switch (this) {
+    UpgradeCategory.hull => hullSlots,
+    UpgradeCategory.officer => officerSlots,
+    UpgradeCategory.crewEquipment => crewSlots,
+  };
+  String get label => switch (this) {
+    UpgradeCategory.hull => 'Hull',
+    UpgradeCategory.officer => 'Officer',
+    UpgradeCategory.crewEquipment => 'Crew Equipment',
+  };
+}
+
+/// Five rarity tiers, ordered common -> legendary. Pre-2026-09-18 saves
+/// only ever used 'common'/'rare' string literals for EquipmentItem.rarity
+/// (see EquipmentItem.fromJson for the compatibility parse); this enum
+/// replaces that raw String going forward.
+enum Rarity { common, uncommon, rare, epic, legendary }
+
+extension RarityBonus on Rarity {
+  /// Flat multiplier applied to an equipped item's numeric effects in
+  /// FleetProgress.apply -- common items are unchanged (1.0, matching
+  /// pre-rework behavior exactly); rare is still exactly the old 1.5x.
+  double get multiplier => switch (this) {
+    Rarity.common => 1.0,
+    Rarity.uncommon => 1.2,
+    Rarity.rare => 1.5,
+    Rarity.epic => 1.85,
+    Rarity.legendary => 2.25,
+  };
+  String get label => switch (this) {
+    Rarity.common => 'Common',
+    Rarity.uncommon => 'Uncommon',
+    Rarity.rare => 'Rare',
+    Rarity.epic => 'Epic',
+    Rarity.legendary => 'Legendary',
+  };
+  String get namePrefix => switch (this) {
+    Rarity.common => 'Fitted',
+    Rarity.uncommon => 'Reinforced',
+    Rarity.rare => 'Fine',
+    Rarity.epic => 'Masterwork',
+    Rarity.legendary => 'Legendary',
+  };
+}
+
+/// Which reward path a chest/roll came from -- each has its own target
+/// rarity distribution (see FleetProgress._rarityWeights). Separate from
+/// ChestKind: ChestKind is the player-facing gem cost tier (still exactly
+/// two, common/rare, matching the existing Shop UI); RollSource is the
+/// finer-grained "how was this actually obtained" used only to pick the
+/// odds table, per the 2026-09-18 chest-rarity investigation (ad-funded
+/// Common Chests had a strictly worse table than the 10-gem purchase of
+/// the same nominal ChestKind.common, by design, to keep paying
+/// meaningfully better than watching ads without making ads worthless).
+enum RollSource { adCommon, paidCommon, paidRare }
+
+/// Exact target rarity distributions per RollSource, per the 2026-09-18
+/// design brief -- "Normal/Common chest" = RollSource.adCommon,
+/// "Common gem pack" = RollSource.paidCommon (the 10-gem purchase of a
+/// ChestKind.common chest), "Rare gem pack" = RollSource.paidRare (the
+/// 50-gem purchase of a ChestKind.rare chest). Entries must sum to 1.0;
+/// FleetProgress._rollRarity walks them in this (insertion) order as a
+/// cumulative distribution.
+const rollRarityWeights = {
+  RollSource.adCommon: {
+    Rarity.common: .70,
+    Rarity.uncommon: .20,
+    Rarity.rare: .08,
+    Rarity.epic: .02,
+  },
+  RollSource.paidCommon: {
+    Rarity.common: .60,
+    Rarity.uncommon: .20,
+    Rarity.rare: .15,
+    Rarity.epic: .05,
+  },
+  RollSource.paidRare: {Rarity.rare: .60, Rarity.epic: .30, Rarity.legendary: .10},
+};
 
 /// All provisional prices and increments live here, never in widgets.
 abstract final class Balance {
@@ -132,6 +252,18 @@ abstract final class Balance {
     final minutes = elapsedMinutes.clamp(0, offlineCapMinutes(treeLevel));
     return (minutes * treeLevel * .001).floor();
   }
+
+  /// Gold reward for the "watch an ad for gold" Common Chest slot
+  /// (playability pass 2026-09-18, replacing a redundant near-identical
+  /// 4th/5th Common Chest ad category -- see RewardedChestService and
+  /// ChestCategory.economy). Deliberately reuses offlineRewardCoins (the
+  /// SAME formula already used for offline-catchup gold) instead of a
+  /// second, parallel income model: this is exactly "what the player's
+  /// current offline rate would pay out over 60 minutes," so it scales
+  /// with fleet progression automatically rather than a hardcoded flat
+  /// number like the original "~100 gold" example.
+  static int adGoldReward(int offlineTreeLevel) =>
+      offlineRewardCoins(offlineTreeLevel, 60);
   static const slotCosts = LifeBalance.commandPrices;
   static const chestCosts = {ChestKind.common: 10, ChestKind.rare: 50};
   static int treeCost(int level) => 1 + level + (level * level ~/ 100);
@@ -142,12 +274,16 @@ abstract final class Balance {
       handlingPerLevel = .0005;
 }
 
-/// Each physical copy has its own ID. Set IDs are reserved metadata, not bonuses.
+/// Each physical copy has its own ID. Set IDs are reserved metadata, not
+/// bonuses. Stacking (identical-item counts, e.g. "Sloop x10") is a pure
+/// display-layer grouping over these individual instances -- see
+/// FleetProgress.stacks -- not a change to how items are stored, so
+/// equip/merge/save logic below is untouched by it.
 class EquipmentItem {
   final String id, name;
   final ItemKind kind;
   final String? hullType, setId;
-  final String rarity;
+  final Rarity rarity;
   final String? specialist, contentId;
   final double bonus;
   const EquipmentItem(
@@ -155,7 +291,7 @@ class EquipmentItem {
     this.name,
     this.kind, {
     this.hullType,
-    this.rarity = 'common',
+    this.rarity = Rarity.common,
     this.bonus = 1,
     this.setId,
     this.specialist,
@@ -164,10 +300,17 @@ class EquipmentItem {
   EquipmentDefinition? get definition => contentId == null
       ? null
       : equipmentContent.firstWhere((d) => d.id == contentId);
+  /// Same identity regardless of rarity -- what "stacks" (Trade Captain
+  /// vs Combat Captain never combine even though both are Officer/
+  /// captain items) and what an auto-merge groups by, together with
+  /// rarity (see FleetProgress.mergeDuplicates/stacks).
+  String get identityKey =>
+      '${kind.name}|${kind == ItemKind.hull ? hullType : contentId}';
   String get description {
     final d = definition;
     if (d != null) {
-      return '${d.description}${rarity == "rare" ? " Rare: numeric gear bonuses ×1.5; ordnance also +4% firepower." : ""}';
+      final pct = ((rarity.multiplier - 1) * 100).round();
+      return '${d.description}${pct > 0 ? ' $pct% bonus.' : ''}';
     }
     return kind == ItemKind.hull
         ? hullFor(hullType!).personality
@@ -179,19 +322,31 @@ class EquipmentItem {
     'name': name,
     'kind': kind.name,
     'hull': hullType,
-    'rarity': rarity,
+    'rarity': rarity.name,
     'bonus': bonus,
     'set': setId,
     'specialist': specialist,
     'content': contentId,
   };
   factory EquipmentItem.fromJson(Map<String, dynamic> j) {
+    // Pre-2026-09-18 saves only ever wrote the String 'common' or 'rare'
+    // for rarity (there was no wider tier system yet) -- map those two
+    // literals onto the new enum's equivalent tiers, and otherwise parse
+    // the enum name directly for saves written by this version onward.
+    final rawRarity = j['rarity'];
+    final rarity = switch (rawRarity) {
+      'common' => Rarity.common,
+      'rare' => Rarity.rare,
+      _ =>
+        Rarity.values.asNameMap()[rawRarity] ??
+            (throw const FormatException('Invalid rarity')),
+    };
     final item = EquipmentItem(
       j['id'],
       j['name'],
       savedKind(j['kind'], j['specialist']),
       hullType: j['hull'],
-      rarity: j['rarity'],
+      rarity: rarity,
       bonus: (j['bonus'] as num).toDouble(),
       setId: j['set'],
       specialist: j['specialist'],
@@ -212,6 +367,20 @@ class EquipmentItem {
     }
     return item;
   }
+}
+
+/// A display-only grouping of identical-identity, identical-rarity owned
+/// copies -- see FleetProgress.stacks. [equipped] is how many of
+/// [items] are currently assigned to some ship; [available] is the rest
+/// (the count auto-merge and the relevance-filtered equip picker both
+/// care about).
+class InventoryStack {
+  final List<EquipmentItem> items;
+  final int equipped;
+  InventoryStack(this.items, this.equipped);
+  EquipmentItem get representative => items.first;
+  int get owned => items.length;
+  int get available => owned - equipped;
 }
 
 class CommandProgress {
@@ -366,8 +535,7 @@ class FleetProgress {
     s.maxHullHp =
         h.hp +
         c.units(CommandTrack.hull) * LifeBalance.hullPerUnit +
-        (equippedHull?.bonus ?? 0) * 5 +
-        bonus(c, ItemKind.equipment) * 3;
+        (equippedHull?.bonus ?? 0) * 5;
     s.hullHp = s.maxHullHp * (preserveDamage ? hpFraction : 1);
     s.crewCount = max(0, (h.crew * crewFraction).round());
     s.speed = h.baseSpeed * (1 + c.percent(CommandTrack.navigation));
@@ -402,7 +570,7 @@ class FleetProgress {
       final i = item(id)!;
       final d = i.definition;
       if (d == null) continue;
-      final multiplier = i.rarity == 'rare' ? 1.5 : 1.0;
+      final multiplier = i.rarity.multiplier;
       for (final effect in d.effects.entries) {
         final n = effect.value * multiplier;
         switch (effect.key) {
@@ -434,7 +602,9 @@ class FleetProgress {
       }
       if (d.shot != null) {
         s.ordnance = d.shot!;
-        if (i.rarity == 'rare') s.firepower *= 1.04;
+        // Generalizes the old rare-only "+4% firepower" (index 2 * 2% =
+        // 4%, unchanged) across all five tiers.
+        s.firepower *= 1 + i.rarity.index * .02;
       }
     }
     s.crewDefense = s.crewDefense.clamp(0, .35);
@@ -443,10 +613,27 @@ class FleetProgress {
     s.economyBonus = s.economyBonus.clamp(0, .2);
   }
 
+  /// Picks a rarity for a roll from [source]'s exact target distribution
+  /// (rollRarityWeights). A cumulative walk over the table in its
+  /// (insertion) order; the tables are const and always sum to 1.0, but a
+  /// defensive last-entry fallback guards float rounding at the very top
+  /// of the range.
+  Rarity _rollRarity(RollSource source, Random rng) {
+    final weights = rollRarityWeights[source]!;
+    final roll = rng.nextDouble();
+    var cumulative = 0.0;
+    for (final entry in weights.entries) {
+      cumulative += entry.value;
+      if (roll < cumulative) return entry.key;
+    }
+    return weights.keys.last;
+  }
+
   EquipmentItem roll(
     ChestKind chest,
     Random rng, {
     required ChestCategory category,
+    required RollSource source,
   }) {
     final pool = equipmentContent
         .where((d) => category.accepts(d.kind))
@@ -456,23 +643,130 @@ class FleetProgress {
         : pool[rng.nextInt(pool.length)];
     final kind = definition?.kind ?? ItemKind.hull;
     final h = hullCatalog[rng.nextInt(hullCatalog.length)];
-    final rare = chest == ChestKind.rare;
+    final rarity = _rollRarity(source, rng);
     final result = EquipmentItem(
       'item-${nextItem++}',
       kind == ItemKind.hull
-          ? '${rare ? 'Fine' : 'Fitted'} ${h.name}'
-          : '${rare ? 'Fine ' : ''}${definition!.name}',
+          ? '${rarity.namePrefix} ${h.name}'
+          : '${rarity.namePrefix} ${definition!.name}',
       kind,
       hullType: kind == ItemKind.hull ? h.name : null,
-      rarity: rare ? 'rare' : 'common',
-      bonus: definition == null ? (rare ? 3 : 1) : 0,
+      rarity: rarity,
+      bonus: definition == null ? (1 + rarity.index).toDouble() : 0.0,
       contentId: definition?.id,
     );
     inventory.add(result);
+    // Auto-merge may immediately consume this very item if it happens to
+    // be the 5th available identical copy (see mergeDuplicates) -- if
+    // so, report whatever it became instead of a now-nonexistent id.
+    mergeDuplicates();
+    final finalResult = item(result.id) ?? _mergeDescendantOf(result);
     lastRewards
       ..clear()
-      ..add(result.id);
-    return result;
+      ..add(finalResult.id);
+    return finalResult;
+  }
+
+  int _idNumber(String id) => int.parse(id.substring(5));
+
+  /// After mergeDuplicates runs, finds the highest-id item sharing
+  /// [original]'s identity that's newer than it -- i.e. what it was
+  /// folded into (possibly several tiers up, if a cascade happened).
+  /// Only called when [original]'s own id no longer exists in inventory.
+  EquipmentItem _mergeDescendantOf(EquipmentItem original) {
+    final n = _idNumber(original.id);
+    final descendants = inventory.where(
+      (i) => i.identityKey == original.identityKey && _idNumber(i.id) > n,
+    );
+    return descendants.isEmpty
+        ? original
+        : descendants.reduce(
+            (a, b) => _idNumber(a.id) > _idNumber(b.id) ? a : b,
+          );
+  }
+
+  /// Automatic 5:1 duplicate upgrading: five AVAILABLE (unequipped)
+  /// identical-identity Common copies merge into one Uncommon; five
+  /// AVAILABLE Uncommon merge into one Rare. Stops at Rare -- ordinary
+  /// duplicate merging never produces Epic or Legendary on its own.
+  /// EQUIPPED copies are never counted or consumed (assignedTo check
+  /// below), so equipping some copies of a stack protects exactly those
+  /// copies from being folded into the next tier, per the design brief's
+  /// "two equipped Common Fluytes remain equipped and untouched" example.
+  /// Runs as a cascade (merging can itself produce a fifth Uncommon,
+  /// which merges again into Rare) in one call.
+  void mergeDuplicates() {
+    var mergedAny = true;
+    while (mergedAny) {
+      mergedAny = false;
+      final groups = <String, List<EquipmentItem>>{};
+      for (final item in inventory) {
+        if (item.rarity != Rarity.common && item.rarity != Rarity.uncommon) {
+          continue;
+        }
+        if (assignedTo(item.id) != null) continue; // equipped: protected
+        groups.putIfAbsent('${item.identityKey}|${item.rarity.name}', () => []).add(item);
+      }
+      for (final group in groups.values) {
+        if (group.length < 5) continue;
+        final five = group.take(5).toList();
+        final sample = five.first;
+        final nextRarity = Rarity.values[sample.rarity.index + 1];
+        for (final consumed in five) {
+          inventory.remove(consumed);
+        }
+        inventory.add(
+          EquipmentItem(
+            'item-${nextItem++}',
+            sample.kind == ItemKind.hull
+                ? '${nextRarity.namePrefix} ${hullFor(sample.hullType!).name}'
+                : '${nextRarity.namePrefix} ${sample.definition!.name}',
+            sample.kind,
+            hullType: sample.hullType,
+            rarity: nextRarity,
+            bonus: sample.definition == null
+                ? (1 + nextRarity.index).toDouble()
+                : 0.0,
+            contentId: sample.contentId,
+          ),
+        );
+        mergedAny = true;
+        break; // restart the scan: group membership has shifted
+      }
+    }
+    // A merge can consume the very item lastRewards was pointing at.
+    lastRewards.removeWhere((id) => item(id) == null);
+  }
+
+  /// A read-only display grouping of [inventory] by identical identity +
+  /// rarity -- "Sloop x10", "Trade Captain x3 owned / x2 equipped / x1
+  /// available" -- WITHOUT changing how items are stored (each owned
+  /// copy remains its own EquipmentItem instance with its own id; see
+  /// the class doc comment on EquipmentItem). Trade Captain and Combat
+  /// Captain never combine since they have different identityKeys.
+  List<InventoryStack> stacks({ItemKind? kind}) {
+    final groups = <String, List<EquipmentItem>>{};
+    for (final item in inventory) {
+      if (kind != null && item.kind != kind) continue;
+      groups
+          .putIfAbsent('${item.identityKey}|${item.rarity.name}', () => [])
+          .add(item);
+    }
+    return [
+      for (final entry in groups.values)
+        InventoryStack(entry, entry.where((i) => assignedTo(i.id) != null).length),
+    ]..sort((a, b) {
+      final kindCompare = a.representative.kind.index.compareTo(
+        b.representative.kind.index,
+      );
+      if (kindCompare != 0) return kindCompare;
+      final rarityCompare = b.representative.rarity.index.compareTo(
+        a.representative.rarity.index,
+      );
+      return rarityCompare != 0
+          ? rarityCompare
+          : a.representative.name.compareTo(b.representative.name);
+    });
   }
 
   Map<String, dynamic> toJson() => {

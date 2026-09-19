@@ -1,5 +1,6 @@
 import '../pirates/progression/fleet_progress.dart';
 import 'ads_service.dart';
+import 'monetization_ids.dart';
 import 'monetization_store.dart';
 
 enum RewardedChestOutcome {
@@ -28,65 +29,69 @@ enum RewardedChestOutcome {
   dismissedWithoutReward,
 }
 
-/// Common Chests' rewarded-ad opening route. Each [ChestCategory] has its
-/// own independent 5-per-day allowance (not a shared pool) -- see
+/// Common Chests' rewarded-ad opening route. Each [RewardedAdGroup] (the
+/// three real underlying ad units -- see MonetizationIds) has its own
+/// independent 5-per-day allowance (not a shared pool) -- see
 /// Balance.rewardedChestDailyCap and MonetizationStore's per-key
 /// counters. This class only decides *whether* a chest may be granted
 /// for watching an ad; the actual chest roll
-/// (PiratesVoyage.openRewardedChest) is the caller's job, and must only
-/// run when this reports [RewardedChestOutcome.granted] -- never
+/// (PiratesVoyage.openRewardedChest, against a category chosen from
+/// [RewardedAdGroupLabel.chestCategories]) is the caller's job, and must
+/// only run when this reports [RewardedChestOutcome.granted] -- never
 /// speculatively, and never more than once per call to [watch].
 ///
-/// [adsByCategory] maps each category to the ad source that serves it.
-/// Several categories are deliberately mapped to the SAME underlying ad
-/// source/unit (see MonetizationIds.rewardedAdUnitIdFor) -- that only
-/// shares ad supply between them; the daily allowance below is always
-/// looked up and consumed by [ChestCategory], never by ad source, so
-/// sharing an ad unit can never combine or inflate two categories' caps.
+/// Playability pass 2026-09-18: previously keyed by the finer-grained
+/// [ChestCategory] (5 values, presented as 5 near-identical UI rows even
+/// though only 3 real ad units back them). Now keyed directly by
+/// [RewardedAdGroup] (3 values = 3 rows), matching ad supply 1:1; a
+/// group covering more than one ChestCategory (crewEquipment) grants a
+/// roll from a random category within it, so nothing became less
+/// obtainable, only less repetitive to browse.
 class RewardedChestService {
-  final Map<ChestCategory, RewardedAdSource> adsByCategory;
+  final Map<RewardedAdGroup, RewardedAdSource> adsByGroup;
   final MonetizationStore store;
   final int dailyCap;
 
   RewardedChestService({
-    required this.adsByCategory,
+    required this.adsByGroup,
     required this.store,
     this.dailyCap = Balance.rewardedChestDailyCap,
   }) : assert(
-         ChestCategory.values.every(adsByCategory.containsKey),
-         'adsByCategory must map every ChestCategory to an ad source',
+         RewardedAdGroup.values.every(adsByGroup.containsKey),
+         'adsByGroup must map every RewardedAdGroup to an ad source',
        );
 
-  /// Convenience for when every category shares one ad source (e.g. most
-  /// tests, or a build that hasn't split rewarded ad units by category).
+  /// Convenience for when every group shares one ad source (e.g. most
+  /// tests, or a build that hasn't split rewarded ad units by group).
   factory RewardedChestService.singleSource({
     required RewardedAdSource ads,
     required MonetizationStore store,
     int dailyCap = Balance.rewardedChestDailyCap,
   }) => RewardedChestService(
-    adsByCategory: {for (final c in ChestCategory.values) c: ads},
+    adsByGroup: {for (final g in RewardedAdGroup.values) g: ads},
     store: store,
     dailyCap: dailyCap,
   );
 
-  String _key(ChestCategory category) => 'chest_${category.name}';
+  String _key(RewardedAdGroup group) => 'chest_group_${group.name}';
 
-  Future<int> remainingToday(ChestCategory category) =>
-      store.remainingRewardedOpensToday(_key(category), dailyCap);
+  Future<int> remainingToday(RewardedAdGroup group) =>
+      store.remainingRewardedOpensToday(_key(group), dailyCap);
 
-  /// Watches one rewarded ad on behalf of [category]. Returns
+  /// Watches one rewarded ad on behalf of [group]. Returns
   /// [RewardedChestOutcome.granted] at most once per call, and only
-  /// after both the SDK confirmed the reward AND this category's daily
+  /// after both the SDK confirmed the reward AND this group's daily
   /// allowance was atomically consumed -- the caller should treat
-  /// exactly (and only) that outcome as "open one Common Chest of this
-  /// category now".
-  Future<RewardedChestOutcome> watch(ChestCategory category) async {
-    // Pre-check avoids spending an ad impression on a category that is
+  /// exactly (and only) that outcome as "open one Common Chest from this
+  /// group now" (picking a category via
+  /// [RewardedAdGroupLabel.chestCategories]).
+  Future<RewardedChestOutcome> watch(RewardedAdGroup group) async {
+    // Pre-check avoids spending an ad impression on a group that is
     // already capped for today.
-    if (await remainingToday(category) <= 0) {
+    if (await remainingToday(group) <= 0) {
       return RewardedChestOutcome.capReached;
     }
-    final result = await adsByCategory[category]!.show();
+    final result = await adsByGroup[group]!.show();
     switch (result) {
       case RewardedShowResult.busy:
         return RewardedChestOutcome.busy;
@@ -95,10 +100,7 @@ class RewardedChestService {
       case RewardedShowResult.dismissedWithoutReward:
         return RewardedChestOutcome.dismissedWithoutReward;
       case RewardedShowResult.earned:
-        final consumed = await store.recordRewardedOpen(
-          _key(category),
-          dailyCap,
-        );
+        final consumed = await store.recordRewardedOpen(_key(group), dailyCap);
         return consumed
             ? RewardedChestOutcome.granted
             : RewardedChestOutcome.capReached;
