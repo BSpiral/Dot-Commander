@@ -1,4 +1,5 @@
 import '../../core/simulation/vessel.dart';
+import '../progression/life_balance.dart';
 import '../ships/hull_catalog.dart';
 import 'dart:math' as math;
 
@@ -262,7 +263,15 @@ class PrototypeResolver implements EncounterResolver {
                 : kind == EncounterKind.cannon
                 ? .15
                 : .08) *
-            (1 - c.damageReduction.clamp(0, .35)) *
+            // Final corrections pass 2026-09-20: was hardcoded at .35 --
+            // the OLD tree-only soft cap -- which silently discarded any
+            // equipment-driven Damage Reduction above it, even though
+            // FleetProgress.apply legitimately allows equipment to push
+            // this up to finalSafetyCeiling (.90). Re-clamping here at
+            // the SAME final ceiling (not the tree cap) keeps this a
+            // real safety bound (still mathematically must stay <1)
+            // without wasting real equipment investment.
+            (1 - c.damageReduction.clamp(0, LifeBalance.finalSafetyCeiling)) *
             (enemy.ordnance == 'fire'
                 ? 1.35
                 : enemy.ordnance == 'grape'

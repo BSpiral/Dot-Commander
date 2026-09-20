@@ -41,7 +41,7 @@ class NpcNavigation {
   bool needsPort(Vessel s) =>
       1 - condition(s) > min(.7, s.npcTolerance + .3) ||
       (s.behavior == BehaviorMode.pirate &&
-          s.cargo >= hullFor(s.hullType).holds * NpcBalance.fullHold);
+          s.cargo >= v.progress.effectiveHoldCapacity(s) * NpcBalance.fullHold);
   bool willing(Vessel s, Vessel target) {
     if (s.playerOwned || s.hunter) return true;
     if (s.fleeing || s.returnToPort || needsPort(s)) return false;

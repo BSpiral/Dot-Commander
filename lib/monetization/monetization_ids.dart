@@ -79,48 +79,42 @@ abstract final class MonetizationIds {
 /// Chest category's rewarded-ad opening route. Named after the AdMob
 /// console labels for those units.
 ///
-/// Playability pass 2026-09-18: this is now also the player-facing unit
-/// for Common Chest AD REWARDS -- previously there were 5 separate "watch
-/// an ad" rows (one per ChestCategory, all funneling into these same 3
-/// underlying ad units), which read as one confusing/redundant 4th-ish
-/// option. There are now exactly 3 "watch an ad to open a Common Chest"
-/// rows, one per group below (see RewardedChestTile/RewardedChestService),
-/// each granting a roll from a RANDOMLY chosen category within that group
-/// (see chestCategories) so every original ChestCategory remains
-/// obtainable via ads, just without a dedicated button each. The freed
-/// 4th/5th row is now a distinct "watch an ad for gold" reward instead
-/// (see RewardedGoldService) -- a genuinely different reward, not another
-/// near-identical chest path. Paid gem-purchase chests (Shop tab) are
+/// Playability pass 2026-09-18: this is also the player-facing unit for
+/// Common Chest AD REWARDS -- there are exactly 3 "watch an ad to open a
+/// Common Chest" rows, one per group below (see RewardedChestTile/
+/// RewardedChestService). Paid gem-purchase chests (Shop tab) are
 /// unaffected and still offer all 5 ChestCategory values individually.
+///
+/// Saturday playtest repair pass 2026-09-20: [crewEquipment] previously
+/// pooled THREE different ChestCategory values (equipment, crew, cannon)
+/// behind one "Crew & Equipment" button, chosen at random per watch --
+/// but ChestCategory.equipment means SHIP equipment (rigging/
+/// reinforcement/figurehead, see ChestCategoryContent.accepts), not crew
+/// gear, so a button promising crew equipment could hand out a
+/// Figurehead. Each group now grants from exactly ONE ChestCategory, so a
+/// button's label is always an honest, complete description of what it
+/// can award -- ChestCategory.equipment and ChestCategory.cannon are no
+/// longer reachable via any rewarded ad (still purchasable in the Shop's
+/// paid chest grid, which already offers all 5 categories individually);
+/// adding a dedicated ad route for either would need a real new AdMob ad
+/// unit, which doesn't exist.
 enum RewardedAdGroup { shipCommon, crewEquipment, officersCommon }
 
 extension RewardedAdGroupLabel on RewardedAdGroup {
   String get label => switch (this) {
     RewardedAdGroup.shipCommon => 'Ship',
-    RewardedAdGroup.crewEquipment => 'Crew & Equipment',
+    RewardedAdGroup.crewEquipment => 'Crew Equipment',
     RewardedAdGroup.officersCommon => 'Officers',
   };
 
-  /// The ChestCategory values this ad group grants access to -- inverse
-  /// of ChestCategoryRewardedGroup below. A watched ad for this group
-  /// rolls a Common Chest from one of these, chosen at random.
+  /// The single ChestCategory this ad group grants access to. Kept
+  /// list-shaped (always exactly 1 element) so existing callers that
+  /// pick "a random category within the group" (see
+  /// CommandScreen._grantRewardedChest) need no changes now that every
+  /// group maps to exactly one category.
   List<ChestCategory> get chestCategories => switch (this) {
     RewardedAdGroup.shipCommon => const [ChestCategory.hull],
-    RewardedAdGroup.crewEquipment => const [
-      ChestCategory.equipment,
-      ChestCategory.crew,
-      ChestCategory.cannon,
-    ],
+    RewardedAdGroup.crewEquipment => const [ChestCategory.crew],
     RewardedAdGroup.officersCommon => const [ChestCategory.officers],
-  };
-}
-
-extension ChestCategoryRewardedGroup on ChestCategory {
-  RewardedAdGroup get rewardedAdGroup => switch (this) {
-    ChestCategory.hull => RewardedAdGroup.shipCommon,
-    ChestCategory.equipment ||
-    ChestCategory.crew ||
-    ChestCategory.cannon => RewardedAdGroup.crewEquipment,
-    ChestCategory.officers => RewardedAdGroup.officersCommon,
   };
 }

@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:dot_commander/pirates/world/caribbean.dart';
 import 'package:dot_commander/pirates/progression/fleet_progress.dart';
+import 'package:dot_commander/pirates/progression/life_balance.dart';
 import 'package:dot_commander/pirates/persistence/voyage_store.dart';
 
 void main() {
@@ -18,15 +19,21 @@ void main() {
         },
       );
       final v = createCaribbean()..coins = 7;
-      v.progress.tree[FleetTrack.offline] = 1000;
+      v.progress.tree[FleetTrack.offline] = 1000; // cap only, see Saturday repair pass 2026-09-20
+      final fleetRate = Balance.fleetCoinsPerHour(v.ships);
       final position = v.ships.first.position;
       await store.save(v);
       now = now.add(const Duration(days: 2));
       final loaded = await store.load();
-      expect(loaded.coins, 487);
+      final expectedReward = Balance.offlineRewardCoins(
+        offlineTreeLevel: 1000,
+        elapsedMinutes: 2 * 24 * 60,
+        fleetCoinsPerHour: fleetRate,
+      );
+      expect(loaded.coins, 7 + expectedReward);
       expect(loaded.ships.first.position.x, position.x);
       expect(loaded.ships.first.position.y, position.y);
-      expect((await store.load()).coins, 487);
+      expect((await store.load()).coins, 7 + expectedReward);
     },
   );
   test('clock rollback never gives negative or bonus currency', () async {
@@ -89,7 +96,11 @@ void main() {
         v.buyTree(s.id, CommandTrack.crew);
       }
       expect(s.crewCount, crew);
-      expect(s.crewEffectiveness, 1.2);
+      // Correction, Port Relations balance pass 2026-09-20: Crew
+      // Effectiveness has no mechanical ceiling (a plain multiplier, see
+      // FleetProgress.apply's own comment) -- 1000 levels genuinely
+      // reaches 1 + LifeBalance.percent(1000), not a hardcoded-capped 1.2.
+      expect(s.crewEffectiveness, 1 + LifeBalance.percent(1000));
     },
   );
 }

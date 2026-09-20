@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -7,7 +9,6 @@ import 'package:dot_commander/monetization/banner_ad_bar.dart';
 import 'package:dot_commander/monetization/monetization_store.dart';
 import 'package:dot_commander/monetization/monetization_ids.dart';
 import 'package:dot_commander/monetization/rewarded_chest_service.dart';
-import 'package:dot_commander/monetization/rewarded_gold_service.dart';
 import 'package:dot_commander/pirates/persistence/voyage_store.dart';
 import 'package:dot_commander/pirates/progression/fleet_progress.dart';
 import 'package:dot_commander/pirates/world/caribbean.dart';
@@ -250,14 +251,24 @@ void main() {
     });
 
     test(
-      'every ChestCategory belongs to exactly one RewardedAdGroup, and every group covers at least one category',
+      'every RewardedAdGroup grants from EXACTLY one ChestCategory -- no '
+      'overlap, no pooling multiple categories behind one button (Saturday '
+      'playtest repair pass: a "Crew Equipment" button that also pooled '
+      'ChestCategory.equipment -- SHIP equipment/figureheads -- is what let '
+      'a Figurehead leak out of that reward)',
       () {
         final covered = <ChestCategory>{};
         for (final group in RewardedAdGroup.values) {
-          expect(group.chestCategories, isNotEmpty);
-          covered.addAll(group.chestCategories);
+          expect(group.chestCategories.length, 1, reason: '${group.name} must grant exactly one category');
+          expect(covered.contains(group.chestCategories.single), isFalse, reason: 'no category may be shared by two groups');
+          covered.add(group.chestCategories.single);
         }
-        expect(covered, ChestCategory.values.toSet());
+        expect(covered, {ChestCategory.hull, ChestCategory.crew, ChestCategory.officers});
+        // Deliberately NOT ad-reachable: no rewarded ad unit exists for
+        // these (still purchasable via the Shop's paid chest grid, which
+        // offers all 5 categories individually).
+        expect(covered.contains(ChestCategory.equipment), isFalse);
+        expect(covered.contains(ChestCategory.cannon), isFalse);
       },
     );
 
@@ -266,6 +277,31 @@ void main() {
       // rows became 3, one per real underlying ad unit.
       expect(RewardedAdGroup.values.length, 3);
     });
+
+    test(
+      'live-verified: repeatedly opening a rewarded chest through each '
+      'RewardedAdGroup, across many rarity rolls, only ever produces an '
+      'item whose ItemKind belongs to that group\'s own category -- the '
+      'exact live-play bug report (an Eye Patch is fine from Crew '
+      'Equipment; a Figurehead is not)',
+      () {
+        for (final group in RewardedAdGroup.values) {
+          final category = group.chestCategories.single;
+          final v = createCaribbean()..gems = 1000000;
+          for (var i = 0; i < 400; i++) {
+            final reward = v.openRewardedChest(category, random: Random(i));
+            expect(
+              category.accepts(reward.kind),
+              isTrue,
+              reason:
+                  '${group.name} (category ${category.name}) produced a '
+                  '${reward.kind.name} item ("${reward.name}", '
+                  '${reward.rarity.label}) -- outside its own category',
+            );
+          }
+        }
+      },
+    );
 
     test(
       'an earned reward grants exactly once and consumes exactly one allowance',
@@ -384,55 +420,78 @@ void main() {
     );
   });
 
-  group('RewardedGoldService: the "watch an ad for gold" reward', () {
-    test('an earned reward grants exactly once and consumes exactly one allowance', () async {
-      final ads = _FakeRewardedAdSource(RewardedShowResult.earned);
-      final store = MonetizationStore(now: () => DateTime.utc(2026, 1, 1));
-      final service = RewardedGoldService(ads: ads, store: store);
-      expect(await service.watch(), RewardedGoldOutcome.granted);
-      expect(await service.remainingToday(), 4);
-      expect(ads.showCalls, 1);
+  group('PiratesVoyage money ship (Saturday repair pass: replaces the old rewarded-ad Gold button)', () {
+    test('spawns eventually (given enough ticks), is a real non-player Vessel, and is tappable for the flat reward', () {
+      final v = createCaribbean(encountersEnabled: true);
+      final before = v.coins;
+      String? moneyShipId;
+      for (var i = 0; i < 20000 && moneyShipId == null; i++) {
+        v.update(1.0);
+        final found = v.ships.where((s) => s.isMoneyShip);
+        if (found.isNotEmpty) moneyShipId = found.first.id;
+      }
+      expect(moneyShipId, isNotNull, reason: 'never spawned across a long simulated run');
+      expect(v.ships.firstWhere((s) => s.id == moneyShipId).playerOwned, isFalse);
+      final reward = v.claimMoneyShip(moneyShipId!);
+      expect(reward, Balance.moneyShipReward);
+      expect(v.coins, before + reward);
+      expect(v.ships.any((s) => s.isMoneyShip), isFalse, reason: 'claiming removes it from the map');
     });
 
-    test('reports capReached without spending an ad impression once exhausted', () async {
-      final store = MonetizationStore(now: () => DateTime.utc(2026, 1, 1));
-      const cap = 1;
-      expect(await store.recordRewardedOpen('ad_gold', cap), isTrue);
-      final service = RewardedGoldService(
-        ads: RewardedAdController(),
-        store: store,
-        dailyCap: cap,
-      );
-      expect(await service.watch(), RewardedGoldOutcome.capReached);
+    test('claiming a non-existent/already-claimed money ship grants nothing (never double-pays)', () {
+      final v = createCaribbean();
+      expect(v.claimMoneyShip('not-a-real-id'), 0);
+      final before = v.coins;
+      expect(v.coins, before);
     });
 
-    test('does not share an allowance with any chest group', () async {
-      final ads = _FakeRewardedAdSource(RewardedShowResult.earned);
-      final store = MonetizationStore(now: () => DateTime.utc(2026, 1, 1));
-      final gold = RewardedGoldService(ads: ads, store: store);
-      final chests = RewardedChestService.singleSource(ads: ads, store: store);
-      expect(await gold.watch(), RewardedGoldOutcome.granted);
-      expect(await store.remainingRewardedOpensToday('ad_gold', 5), 4);
+    test('never more than one money ship exists at a time', () {
+      final v = createCaribbean(encountersEnabled: true);
+      for (var i = 0; i < 20000; i++) {
+        v.update(1.0);
+        expect(v.ships.where((s) => s.isMoneyShip).length, lessThanOrEqualTo(1));
+      }
+    });
+
+    test('an unclaimed money ship despawns on its own instead of lingering forever', () {
+      final v = createCaribbean(encountersEnabled: true);
+      var sawOne = false;
+      for (var i = 0; i < 20000; i++) {
+        v.update(1.0);
+        if (v.ships.any((s) => s.isMoneyShip)) {
+          sawOne = true;
+        } else if (sawOne) {
+          // Appeared, then disappeared without ever being claimed.
+          return;
+        }
+      }
+      fail('a money ship spawned but never despawned within the run');
+    });
+
+    test('claiming (or despawning) enforces at least the stated cooldown before the next one can appear', () {
+      final v = createCaribbean(encountersEnabled: true);
+      double? firstSeenAt;
+      double? secondSeenAt;
+      var wasPresent = false;
+      for (var t = 0.0; t < 20000 && secondSeenAt == null; t += 1.0) {
+        v.update(1.0);
+        final present = v.ships.any((s) => s.isMoneyShip);
+        if (present && !wasPresent) {
+          if (firstSeenAt == null) {
+            firstSeenAt = t;
+          } else {
+            secondSeenAt = t;
+          }
+        }
+        wasPresent = present;
+      }
+      expect(firstSeenAt, isNotNull);
+      expect(secondSeenAt, isNotNull);
       expect(
-        await chests.remainingToday(RewardedAdGroup.shipCommon),
-        5, // untouched by the gold grant
+        secondSeenAt! - firstSeenAt!,
+        greaterThanOrEqualTo(Balance.moneyShipCooldownSimSeconds),
+        reason: 'must not be continuously farmable',
       );
-    });
-  });
-
-  group('PiratesVoyage.grantAdGold', () {
-    test('adds coins scaled by the existing offline-earning formula, not a hardcoded amount', () {
-      final voyage = createCaribbean();
-      voyage.progress.tree[FleetTrack.offline] = 50;
-      final before = voyage.coins;
-      final reward = voyage.grantAdGold();
-      expect(reward, Balance.offlineRewardCoins(50, 60));
-      expect(voyage.coins, before + reward);
-      // A higher offline tree level yields a strictly larger reward --
-      // proving this scales with progression rather than being fixed.
-      voyage.progress.tree[FleetTrack.offline] = 500;
-      final higherReward = voyage.grantAdGold();
-      expect(higherReward, greaterThan(reward));
     });
   });
 
@@ -504,7 +563,7 @@ void main() {
     );
   });
 
-  group('Shop tab: rewarded Common Chest + gold rows', () {
+  group('Shop tab: rewarded Common Chest rows', () {
     testWidgets(
       'one "watch an ad" row per RewardedAdGroup (3, down from the old '
       '5-per-category layout), none for Rare, each showing its own 5/5 '
@@ -545,44 +604,6 @@ void main() {
           find.textContaining('${Balance.rewardedChestDailyCap}/${Balance.rewardedChestDailyCap} remaining today'),
           findsNWidgets(3),
         );
-      },
-    );
-
-    testWidgets(
-      'the gold row appears alongside the 3 chest rows when wired, and grants via onAdGoldGranted',
-      (tester) async {
-        var goldGranted = false;
-        final voyage = createCaribbean();
-        await tester.pumpWidget(
-          MaterialApp(
-            home: Scaffold(
-              body: SingleChildScrollView(
-                child: ProgressionPanel(
-                  voyage: voyage,
-                  ship: voyage.ships.first,
-                  tab: 0,
-                  changed: () {},
-                  rewardedChests: RewardedChestService.singleSource(
-                    ads: RewardedAdController(),
-                    store: MonetizationStore(now: () => DateTime.utc(2026, 1, 1)),
-                  ),
-                  rewardedGold: RewardedGoldService(
-                    ads: RewardedAdController(),
-                    store: MonetizationStore(now: () => DateTime.utc(2026, 1, 1)),
-                  ),
-                  onRewardedChestGranted: (_) async {},
-                  onAdGoldGranted: () async {
-                    goldGranted = true;
-                  },
-                ),
-              ),
-            ),
-          ),
-        );
-        await tester.pump();
-        expect(find.byKey(const Key('watch_gold_ad')), findsOneWidget);
-        expect(find.textContaining('open a Common'), findsNWidgets(3));
-        expect(goldGranted, isFalse); // not tapped yet
       },
     );
 

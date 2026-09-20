@@ -24,6 +24,101 @@ class PiratesVoyage extends Simulation {
   late final WorldLife life = WorldLife(this);
   PortReceipt? lastPort;
   late final FleetProgress progress = FleetProgress(ships);
+
+  // Saturday repair pass 2026-09-20: the map-based "money ship" (replaces
+  // the old rewarded-ad Gold button). Deliberately reuses the EXISTING
+  // ship/navigation/rendering systems -- it's a completely ordinary
+  // non-player Vessel (tagged isMoneyShip), so npc_navigation.dart's
+  // generic "every non-player atSea ship" tick already sails it around
+  // with zero new movement code. Only spawn timing, despawn, and claiming
+  // are new. State here is session-only by design (not serialized -- see
+  // VoyageStore.save filtering isMoneyShip ships out of the snapshot), so
+  // an app restart simply starts a fresh cooldown rather than needing new
+  // save-format fields for a lightweight bonus feature.
+  double _moneyShipCooldownRemaining = 0, _moneyShipAliveSeconds = 0, _moneyShipCheckTimer = 0;
+
+  void _tickMoneyShip(double dt) {
+    final existing = ships.where((s) => s.isMoneyShip).toList();
+    if (existing.isNotEmpty) {
+      // The money ship is deliberately excluded from life.startPort and
+      // checkDiscovery (see combatAvailable/the update() guard above --
+      // it never enters WorldLife.works, so it never needs any special
+      // case in save/restore for an id VoyageStore.save excludes from
+      // the snapshot). Left alone, though, reaching a port/search
+      // destination would still flip it to Activity.docked/observing via
+      // the ordinary movement system and then sit there forever with
+      // nothing to release it -- so simply give it a fresh destination
+      // whenever that happens, keeping it perpetually underway. A ship
+      // that never quite makes port is exactly the right feel for it
+      // anyway.
+      for (final s in existing) {
+        if (s.activity == Activity.docked || s.activity == Activity.observing) {
+          s.activity = Activity.sailing;
+          s.destination = chooseDestination(s);
+        }
+      }
+      _moneyShipAliveSeconds += dt;
+      if (_moneyShipAliveSeconds >= Balance.moneyShipDespawnSimSeconds) {
+        for (final s in existing) {
+          ships.remove(s);
+        }
+        _moneyShipAliveSeconds = 0;
+        _moneyShipCooldownRemaining = Balance.moneyShipCooldownSimSeconds;
+        revision++;
+      }
+      return;
+    }
+    if (_moneyShipCooldownRemaining > 0) {
+      _moneyShipCooldownRemaining = max(0, _moneyShipCooldownRemaining - dt);
+      return;
+    }
+    _moneyShipCheckTimer += dt;
+    if (_moneyShipCheckTimer < Balance.moneyShipSpawnCheckIntervalSimSeconds) {
+      return;
+    }
+    _moneyShipCheckTimer = 0;
+    if (rng.nextDouble() >= Balance.moneyShipSpawnChance) return;
+    _spawnMoneyShip();
+  }
+
+  void _spawnMoneyShip() {
+    final ports = places
+        .where((p) => p.kind == DestinationKind.port && p.id != 'tortuga')
+        .toList();
+    if (ports.isEmpty) return;
+    final port = ports[rng.nextInt(ports.length)];
+    final h = hullFor('Galleon');
+    ships.add(
+      Vessel(
+        id: 'money-ship-${rng.nextInt(1 << 31)}',
+        name: 'The Gilded Prize',
+        captain: 'Unknown',
+        hullType: h.name,
+        position: port.position,
+        speed: h.baseSpeed,
+        maxHullHp: h.hp,
+        crewCount: h.crew,
+        behavior: BehaviorMode.merchant,
+        playerOwned: false,
+      )..isMoneyShip = true,
+    );
+    revision++;
+  }
+
+  /// Claims [id]'s flat gold reward and removes it from the map. Returns
+  /// the amount granted, or 0 if [id] isn't a currently-present money
+  /// ship (already claimed/despawned/never existed) -- callers should
+  /// treat 0 as "nothing happened," not an error.
+  int claimMoneyShip(String id) {
+    final match = ships.where((s) => s.id == id && s.isMoneyShip);
+    if (match.isEmpty) return 0;
+    ships.remove(match.first);
+    coins += Balance.moneyShipReward;
+    _moneyShipAliveSeconds = 0;
+    _moneyShipCooldownRemaining = Balance.moneyShipCooldownSimSeconds;
+    revision++;
+    return Balance.moneyShipReward;
+  }
   String? purchaseSlot() {
     final n = progress.commands.length;
     if (n >= 5 || coins < Balance.slotCosts[n]) return null;
@@ -79,7 +174,9 @@ class PiratesVoyage extends Simulation {
   }
 
   bool buyFleetTree(FleetTrack track) {
-    if (track != FleetTrack.offline) return false;
+    if (track != FleetTrack.offline && track != FleetTrack.shipHold) {
+      return false;
+    }
     final level = progress.tree[track] ?? 0,
         cost = Balance.treeCost(progress.tree[track] ?? 0);
     if (level >= Balance.maxLevel || coins < cost) return false;
@@ -124,18 +221,6 @@ class PiratesVoyage extends Simulation {
       category: category,
       source: RollSource.adCommon,
     );
-    revision++;
-    return reward;
-  }
-
-  /// The "watch an ad for gold" reward (playability pass 2026-09-18,
-  /// replacing a redundant near-identical 4th/5th Common Chest ad
-  /// category -- see RewardedChestService.watchGold). Gold only, no
-  /// item roll; not tied to any ChestCategory since it grants no
-  /// equipment.
-  int grantAdGold() {
-    final reward = Balance.adGoldReward(progress.tree[FleetTrack.offline] ?? 0);
-    coins += reward;
     revision++;
     return reward;
   }
@@ -200,6 +285,10 @@ class PiratesVoyage extends Simulation {
   bool busy(String id) => heldShips.contains(id) || inBattle(id);
   bool combatAvailable(Vessel s) =>
       s.atSea &&
+      // The money ship is a purely visual sail-and-tap bonus (see
+      // isMoneyShip's doc comment) -- never a combat participant, so it
+      // never needs an encounter/save-format special case.
+      !s.isMoneyShip &&
       s.hullHp > 0 &&
       s.crewCount > 0 &&
       !s.recovering &&
@@ -264,6 +353,7 @@ class PiratesVoyage extends Simulation {
       }
     }
     life.tick(dt);
+    _tickMoneyShip(dt);
     if (encountersEnabled && npcDecisions) npc.tick(dt);
     for (final s in ships.toList()) {
       if (s.atSea &&
@@ -277,6 +367,13 @@ class PiratesVoyage extends Simulation {
     super.update(dt);
     for (final s in ships.toList()) {
       if (!s.atSea || previous[s.id] != Activity.sailing) continue;
+      // The money ship never actually enters port service (see
+      // isMoneyShip's doc comment) -- it's a purely visual sail-and-tap
+      // bonus, not a real economic actor, so it never touches
+      // WorldLife.works and therefore never needs any special-case
+      // handling in save/restore for an id that VoyageStore.save
+      // deliberately excludes from the snapshot.
+      if (s.isMoneyShip) continue;
       if (s.activity == Activity.docked) {
         life.startPort(s);
       } else if (s.activity == Activity.observing) {
@@ -359,7 +456,7 @@ class PiratesVoyage extends Simulation {
         if (r.winnerId == ship.id) {
           final taken = min(
             r.loot,
-            max(0, hullFor(ship.hullType).holds - ship.cargo),
+            max(0, progress.effectiveHoldCapacity(ship) - ship.cargo),
           );
           ship.cargo += taken;
           life.log(
@@ -528,7 +625,15 @@ class PiratesVoyage extends Simulation {
               c.cargo > 1000 ||
               !c.crewDefense.isFinite ||
               c.crewDefense < 0 ||
-              c.crewDefense > .35 ||
+              // Final corrections pass 2026-09-20: was hardcoded at the
+              // OLD .35 tree-only soft cap -- legitimate equipment can
+              // now push a live ship's crewDefense up to
+              // finalSafetyCeiling (.90, see FleetProgress.apply), so a
+              // real, valid in-progress encounter snapshot could
+              // legitimately exceed .35. Validate against the same
+              // final ceiling instead, or this would wrongly reject (as
+              // "corrupted") a perfectly valid save.
+              c.crewDefense > LifeBalance.finalSafetyCeiling ||
               !c.openingVolley.isFinite ||
               c.openingVolley < 0 ||
               c.openingVolley > .2 ||

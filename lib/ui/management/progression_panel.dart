@@ -1,13 +1,11 @@
 import '../../monetization/monetization_ids.dart';
 import '../../monetization/rewarded_chest_service.dart';
-import '../../monetization/rewarded_gold_service.dart';
 import '../../pirates/progression/life_balance.dart';
 import 'package:flutter/material.dart';
 import '../../pirates/progression/fleet_progress.dart';
 import '../../pirates/encounters/pirates_voyage.dart';
 import '../../core/simulation/vessel.dart';
 import 'rewarded_chest_tile.dart';
-import 'rewarded_gold_tile.dart';
 import 'upgrades_panel.dart';
 
 class ProgressionPanel extends StatelessWidget {
@@ -16,9 +14,7 @@ class ProgressionPanel extends StatelessWidget {
   final int tab;
   final VoidCallback changed;
   final RewardedChestService? rewardedChests;
-  final RewardedGoldService? rewardedGold;
   final Future<void> Function(RewardedAdGroup group)? onRewardedChestGranted;
-  final Future<void> Function()? onAdGoldGranted;
   const ProgressionPanel({
     super.key,
     required this.voyage,
@@ -26,9 +22,7 @@ class ProgressionPanel extends StatelessWidget {
     required this.tab,
     required this.changed,
     this.rewardedChests,
-    this.rewardedGold,
     this.onRewardedChestGranted,
-    this.onAdGoldGranted,
   });
   @override
   Widget build(BuildContext context) {
@@ -102,8 +96,9 @@ class ProgressionPanel extends StatelessWidget {
         }
       }
       // Rewarded-ad rows: exactly 3 (one per real ad unit -- see
-      // RewardedAdGroup), plus a 4th, genuinely different reward (gold)
-      // in the slot that used to be a near-identical chest path.
+      // RewardedAdGroup). The Gold reward that used to live here
+      // (Saturday repair pass 2026-09-20) is now the map's money ship
+      // instead -- see PiratesVoyage.claimMoneyShip.
       if (rewardedChests != null && onRewardedChestGranted != null) {
         for (final group in RewardedAdGroup.values) {
           widgets.add(
@@ -114,15 +109,6 @@ class ProgressionPanel extends StatelessWidget {
             ),
           );
         }
-      }
-      if (rewardedGold != null && onAdGoldGranted != null) {
-        widgets.add(
-          RewardedGoldTile(
-            service: rewardedGold!,
-            goldPreview: Balance.adGoldReward(p.tree[FleetTrack.offline] ?? 0),
-            onGranted: onAdGoldGranted!,
-          ),
-        );
       }
       for (final id in p.lastRewards) {
         final item = p.item(id)!;
@@ -185,14 +171,30 @@ class ProgressionPanel extends StatelessWidget {
           subtitle: Text('Shared by all commands. Does not increase CP.'),
         ),
       );
-      for (final t in [FleetTrack.offline]) {
+      for (final t in [FleetTrack.offline, FleetTrack.shipHold]) {
         final level = p.tree[t] ?? 0, cost = Balance.treeCost(p.tree[t] ?? 0);
+        final title = switch (t) {
+          FleetTrack.offline => 'Offline Effectiveness',
+          FleetTrack.shipHold => 'Ship Hold',
+          FleetTrack.portFavor => 'Port Relations', // unreachable: never in this list
+        };
+        final detail = switch (t) {
+          // Port Relations balance pass 2026-09-20: this track no longer
+          // sets the offline coin RATE (see Balance.fleetCoinsPerHour) --
+          // only the CAP on how long that rate keeps paying out while away.
+          FleetTrack.offline =>
+            'Increases how long your fleet keeps earning offline income '
+                'while away. Current cap: ${p.offlineCapLabel}; grows from 4h to 8h.',
+          FleetTrack.shipHold =>
+            '+1 cargo hold on every ship per level, up to +50 total '
+                '(absolute cap 100 combined with hull base and equipment). '
+                'Current bonus: +${(50 * level / 1000).floor()}.',
+          FleetTrack.portFavor => '',
+        };
         widgets.add(
           row(
-            '${t == FleetTrack.portFavor ? 'Port Relations' : 'Offline Effectiveness'} $level / 1000',
-            t == FleetTrack.portFavor
-                ? '+0.1% arrival coins per level'
-                : '+0.001 coin/min per level away. Current cap: ${p.offlineCapLabel}; grows from 4h to 8h.',
+            '$title $level / 1000',
+            detail,
             level == 1000 ? 'MAXED' : '$cost coins',
             level < 1000 && voyage.coins >= cost
                 ? () => action(() {

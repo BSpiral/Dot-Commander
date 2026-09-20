@@ -234,8 +234,13 @@ const equipmentContent = [
     'carpenter',
     'Ship Carpenter',
     ItemKind.carpenter,
-    '8% Hull protection; +1 limited field repair capacity.',
-    {'defense': .08, 'repair': 1},
+    '8% Hull protection; +1 limited field repair capacity; 5% Post-Battle Hull Repair.',
+    // Final corrections pass 2026-09-20: added 'hullRecovery' -- a
+    // thematically obvious fit for a ship's own carpenter, and the
+    // first real equipment source for FleetProgress.apply's
+    // postHullRecovery, matching how quartermaster/bandages already do
+    // this for the crew side via 'recovery'.
+    {'defense': .08, 'repair': 1, 'hullRecovery': .05},
   ),
   EquipmentDefinition(
     'navigator',

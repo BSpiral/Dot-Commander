@@ -1,7 +1,6 @@
 import '../../monetization/billing_service.dart';
 import '../../monetization/monetization_ids.dart';
 import '../../monetization/rewarded_chest_service.dart';
-import '../../monetization/rewarded_gold_service.dart';
 import '../../pirates/encounters/pirates_voyage.dart';
 import '../../pirates/ships/crew_representation.dart';
 import '../theater/battle_deck.dart';
@@ -31,10 +30,8 @@ class ManagementPanel extends StatelessWidget {
   final VoidCallback togglePause;
   final bool hasRemoveAds;
   final RewardedChestService? rewardedChests;
-  final RewardedGoldService? rewardedGold;
   final BillingService? billing;
   final Future<void> Function(RewardedAdGroup group)? onRewardedChestGranted;
-  final Future<void> Function()? onAdGoldGranted;
   const ManagementPanel({
     super.key,
     this.encounter,
@@ -52,10 +49,8 @@ class ManagementPanel extends StatelessWidget {
     required this.togglePause,
     this.hasRemoveAds = false,
     this.rewardedChests,
-    this.rewardedGold,
     this.billing,
     this.onRewardedChestGranted,
-    this.onAdGoldGranted,
   });
   @override
   Widget build(BuildContext context) {
@@ -74,9 +69,7 @@ class ManagementPanel extends StatelessWidget {
             tab: tab,
             changed: onChanged ?? () {},
             rewardedChests: rewardedChests,
-            rewardedGold: rewardedGold,
             onRewardedChestGranted: onRewardedChestGranted,
-            onAdGoldGranted: onAdGoldGranted,
           ),
       ],
       3 => [

@@ -6,7 +6,14 @@ part 'equipment_content.dart';
 
 enum CommandTrack { hull, firepower, crew, navigation, portRelations }
 
-enum FleetTrack { portFavor, offline }
+// shipHold added 2026-09-20 (Port Relations balance pass): fleet-wide
+// (shared by every player ship, like offline) +1-per-step cargo hold
+// progression, up to +50 total at max level -- see
+// FleetProgress.effectiveHoldCapacity and buyFleetTree. portFavor
+// remains the pre-2026-09-14 deprecated/migrated-away slot (see
+// VoyageStore's legacy-save migration below); shipHold is a genuinely
+// new, unrelated slot, not a repurposing of it.
+enum FleetTrack { portFavor, offline, shipHold }
 
 enum ItemKind {
   hull,
@@ -238,32 +245,104 @@ abstract final class Balance {
           level.clamp(0, maxLevel) ~/
           maxLevel);
 
-  /// Coins earned for being away for [elapsedMinutes] real-world minutes
-  /// at fleet-offline-tree [treeLevel] -- the single source of truth for
-  /// this formula, shared by VoyageStore.load (a true cold start) AND
-  /// CommandScreen's app-lifecycle resume handler (returning from the
-  /// background). Previously this reward was computed ONLY inside
-  /// VoyageStore.load, which runs exactly once per process launch --
-  /// backgrounding the app (by far the most common way a phone game is
-  /// "closed" without actually terminating the process) and later
-  /// resuming it never re-ran this calculation at all, so offline
-  /// progression silently never applied to that far more common case.
-  static int offlineRewardCoins(int treeLevel, int elapsedMinutes) {
-    final minutes = elapsedMinutes.clamp(0, offlineCapMinutes(treeLevel));
-    return (minutes * treeLevel * .001).floor();
+  /// Saturday repair pass 2026-09-20: the OLD formula (`treeLevel * .001
+  /// coin/min`) was completely disconnected from real earning potential --
+  /// it paid literally $0/hour for every player who hadn't specifically
+  /// spent Fleet coins on the "Offline Effectiveness" track (the default
+  /// for every new save), which is what live play reported as "offline
+  /// money is not being awarded." Replaced with a rate built from the
+  /// SAME per-ship stats that already scale trade income during active
+  /// play (Vessel.speed, Vessel.economyBonus -- see FleetProgress.apply
+  /// and WorldLife.startPort), anchored to a calibrated baseline: a
+  /// neutral 1.0-throughput ship earns [neutralShipCoinsPerHour] (540
+  /// gold/hour, ~9/min, matching a live-measured Merchant-behavior
+  /// baseline). A ship's own throughput factor is its (speed x cargo
+  /// hold) relative to the Galley -- the hull the game's own content
+  /// already designates as the dedicated Merchant/trading hull (see
+  /// HullDefinition's favoredRole in hull_catalog.dart) -- so a fresh
+  /// starting Sloop (speed 66, hold 4) computes to ~339/hour, closely
+  /// matching the ~324/hour ("-40%") starting-ship estimate from the
+  /// 2026-09-20 economy audit. offlineCapMinutes (still keyed off the
+  /// Offline Effectiveness Fleet Tree, 4h-8h) is UNCHANGED -- only the
+  /// RATE was broken, not the cap.
+  static const neutralShipCoinsPerHour = 540.0;
+  static const _referenceThroughputSpeed = 35.0, _referenceThroughputHolds = 12;
+
+  /// A single ship's own (speed x cargo hold) throughput relative to the
+  /// Galley reference -- 1.0 for a Galley with no bonuses, less for a
+  /// smaller/slower hull, more for Navigation Tree/equipment speed gains.
+  static double shipThroughputFactor(Vessel s) =>
+      (s.speed * hullFor(s.hullType).holds) /
+      (_referenceThroughputSpeed * _referenceThroughputHolds);
+
+  /// A single ship's real coins/hour at its CURRENT stats -- throughput
+  /// (speed x hold, see [shipThroughputFactor]) times its existing trade
+  /// bonus (Vessel.economyBonus: portRelations Tree + equipped economy
+  /// gear, already 0-0.2, the exact same field WorldLife.startPort uses
+  /// for the live sale-price bonus).
+  static double shipCoinsPerHour(Vessel s) =>
+      neutralShipCoinsPerHour * shipThroughputFactor(s) * (1 + s.economyBonus);
+
+  /// The player's whole fleet's combined coins/hour -- every productive
+  /// ship contributes its own [shipCoinsPerHour] independently, so a
+  /// larger or better-invested fleet earns proportionally more (both
+  /// offline and as the basis for future related tuning).
+  static double fleetCoinsPerHour(Iterable<Vessel> ships) => ships
+      .where((s) => s.playerOwned && !s.isMoneyShip)
+      .fold(0.0, (sum, s) => sum + shipCoinsPerHour(s));
+
+  /// Coins earned for being away for [elapsedMinutes] real-world minutes,
+  /// at the fleet's combined [fleetCoinsPerHour] and fleet-offline-tree
+  /// [offlineTreeLevel] (governs only the CAP -- see offlineCapMinutes).
+  /// The single source of truth for this formula, shared by
+  /// VoyageStore.load (a true cold start) AND CommandScreen's
+  /// app-lifecycle resume handler (returning from the background) --
+  /// backgrounding the app is by far the most common way a phone game is
+  /// "closed" without actually terminating the process, so both paths
+  /// must compute this identically.
+  static int offlineRewardCoins({
+    required int offlineTreeLevel,
+    required int elapsedMinutes,
+    required double fleetCoinsPerHour,
+  }) {
+    final minutes = elapsedMinutes.clamp(0, offlineCapMinutes(offlineTreeLevel));
+    return (fleetCoinsPerHour / 60 * minutes).floor();
   }
 
-  /// Gold reward for the "watch an ad for gold" Common Chest slot
-  /// (playability pass 2026-09-18, replacing a redundant near-identical
-  /// 4th/5th Common Chest ad category -- see RewardedChestService and
-  /// ChestCategory.economy). Deliberately reuses offlineRewardCoins (the
-  /// SAME formula already used for offline-catchup gold) instead of a
-  /// second, parallel income model: this is exactly "what the player's
-  /// current offline rate would pay out over 60 minutes," so it scales
-  /// with fleet progression automatically rather than a hardcoded flat
-  /// number like the original "~100 gold" example.
-  static int adGoldReward(int offlineTreeLevel) =>
-      offlineRewardCoins(offlineTreeLevel, 60);
+  /// The money ship's flat claim reward -- "roughly one neutral
+  /// ship-hour" per the 2026-09-20 economy audit, deliberately NOT scaled
+  /// by the player's own fleet (unlike offline income): it's a fixed,
+  /// predictable bonus rather than a reduced or inflated echo of
+  /// whatever the player already has.
+  static const moneyShipReward = 540;
+  // Pacing (see PiratesVoyage's money-ship spawn/despawn): a flat 15
+  // minutes comfortably clears "at least 10 minutes" while landing at
+  // "a few" (~4) opportunities per hour once despawn/claim time is
+  // included; despawning an unclaimed ship after 90 sim-seconds keeps
+  // one from lingering on the map indefinitely.
+  static const moneyShipCooldownSimSeconds = 900.0,
+      moneyShipDespawnSimSeconds = 90.0,
+      moneyShipSpawnCheckIntervalSimSeconds = 30.0,
+      moneyShipSpawnChance = .12;
+
+  /// Port Relations balance pass 2026-09-20: how a ship's hull base
+  /// hold, its share of the fleet-wide Ship Hold tree (0-50, see
+  /// FleetTrack.shipHold), and equipment's own hold percentage combine
+  /// into one effective capacity -- absolute-capped at 100 regardless of
+  /// source. Deliberately hull-independent/pure (takes plain numbers,
+  /// not a Vessel) so it's directly testable against the design's own
+  /// worked examples without needing a real hull of that exact base
+  /// hold; see FleetProgress.effectiveHoldCapacity for the real,
+  /// hull-driven entry point every gameplay call site actually uses.
+  static int combinedHoldCapacity({
+    required int baseHold,
+    required int shipHoldTreeLevel,
+    double equipmentBonus = 0,
+  }) {
+    final treeBonus = 50 * shipHoldTreeLevel ~/ maxLevel;
+    return min(100, ((baseHold + treeBonus) * (1 + equipmentBonus)).round());
+  }
+
   static const slotCosts = LifeBalance.commandPrices;
   static const chestCosts = {ChestKind.common: 10, ChestKind.rare: 50};
   static int treeCost(int level) => 1 + level + (level * level ~/ 100);
@@ -409,6 +488,32 @@ class CommandProgress {
   int level(CommandTrack t) => tree[t] ?? 0;
   double units(CommandTrack t) => LifeBalance.rewardUnits(level(t));
   double percent(CommandTrack t) => LifeBalance.percent(level(t));
+
+  /// Port Relations balance pass 2026-09-20: two NEW, explicit integer
+  /// benefits of the SAME portRelations track the percent-based Port
+  /// Service Discount/Trade Profit Bonus already use -- how much cargo
+  /// (portCargoSupply) or hull damage (portRepairSupply) a port can
+  /// service in one visit for THIS ship. Both climb linearly from their
+  /// existing flat base (LifeBalance.cargoPortCapacity/serviceCapacity,
+  /// currently 10 each) to 100 across the FULL portRelations level range
+  /// (0-1100) -- deliberately NOT gated behind the same 20%-of-the-way
+  /// point where the percent facets saturate (see LifeBalance.percent),
+  /// so the long remainder of the tree past that point still delivers
+  /// real, growing benefit instead of generating wasted reward-units.
+  /// Independent of ChestCategory/UpgradeCategory 100% integer, never a
+  /// percentage -- see the "keep these concepts separate" design note.
+  int get portCargoSupply =>
+      (LifeBalance.cargoPortCapacity +
+              (100 - LifeBalance.cargoPortCapacity) *
+                  level(CommandTrack.portRelations) ~/
+                  LifeBalance.maxLevels)
+          .clamp(LifeBalance.cargoPortCapacity, 100);
+  int get portRepairSupply =>
+      (LifeBalance.serviceCapacity +
+              (100 - LifeBalance.serviceCapacity) *
+                  level(CommandTrack.portRelations) ~/
+                  LifeBalance.maxLevels)
+          .clamp(LifeBalance.serviceCapacity, 100);
   /// Every purchase on a track grows ALL of that track's linked stats at
   /// once (see FleetProgress.apply -- e.g. a Hull level always adds both
   /// capacity and Damage Reduction and Post-Battle Repair together). The
@@ -422,13 +527,34 @@ class CommandProgress {
     if (current >= LifeBalance.maxLevels) return 'Maximum level reached';
     final unitsDelta =
         LifeBalance.rewardUnits(current + 1) - LifeBalance.rewardUnits(current);
-    final percentDelta =
-        (LifeBalance.percent(current + 1) - LifeBalance.percent(current)) * 100;
     String number(double value) =>
         value.toStringAsFixed(2).replaceFirst(RegExp(r'\.?0+$'), '');
-    String percentLine(String benefit) => percentDelta <= 0
-        ? 'Next level: +0% $benefit (cap reached)'
-        : 'Next level: +${number(percentDelta)}% $benefit';
+    // Correction, Port Relations balance pass 2026-09-20: LifeBalance.
+    // percent() itself is uncapped now (see its own doc comment), but
+    // FleetProgress.apply STILL clamps a few specific fields at their
+    // own mechanically-necessary ceiling (damageReduction/crewDefense at
+    // .35, postHullRecovery/postCrewRecovery at 1.0). Without [ceiling]
+    // here, this UI text would keep promising "+0.1% more" forever for
+    // those facets even after they stop having ANY real effect in
+    // apply() -- a dishonest, misleading kind of dead progression this
+    // pass is specifically trying to avoid. Facets with no [ceiling]
+    // (Sailing Speed, Crew Effectiveness, Trade Profit Bonus, Opening
+    // Attack, Handling, Port/Boarding facets that are self-protected at
+    // their OWN use site rather than via a field clamp -- see
+    // WorldLife's embedded `min(...)` calls) correctly keep growing.
+    String percentLine(String benefit, {double? ceiling}) {
+      final before = ceiling == null
+          ? LifeBalance.percent(current)
+          : LifeBalance.percent(current).clamp(0, ceiling).toDouble();
+      final after = ceiling == null
+          ? LifeBalance.percent(current + 1)
+          : LifeBalance.percent(current + 1).clamp(0, ceiling).toDouble();
+      final delta = (after - before) * 100;
+      return delta <= 0
+          ? 'Next level: +0% $benefit (cap reached)'
+          : 'Next level: +${number(delta)}% $benefit';
+    }
+
     switch (track) {
       case CommandTrack.hull:
         const pattern = [
@@ -439,9 +565,13 @@ class CommandProgress {
           'Port Repair Discount',
         ];
         final step = pattern[current % pattern.length];
-        return step == 'Hull capacity'
-            ? 'Next level: +${number(unitsDelta * LifeBalance.hullPerUnit)} Hull capacity'
-            : percentLine(step);
+        return switch (step) {
+          'Hull capacity' =>
+            'Next level: +${number(unitsDelta * LifeBalance.hullPerUnit)} Hull capacity',
+          'Damage Reduction' => percentLine(step, ceiling: LifeBalance.damageReductionTreeCap),
+          'Post-Battle Hull Repair' => percentLine(step, ceiling: LifeBalance.postHullRecoveryTreeCap),
+          _ => percentLine(step),
+        };
       case CommandTrack.firepower:
         const pattern = ['Firepower', 'Opening Attack Strength'];
         final step = pattern[current % pattern.length];
@@ -455,7 +585,12 @@ class CommandProgress {
           'Crew Effectiveness',
           'Boarding Defense',
         ];
-        return percentLine(pattern[current % pattern.length]);
+        final step = pattern[current % pattern.length];
+        return switch (step) {
+          'Crew Recovery' => percentLine(step, ceiling: LifeBalance.postCrewRecoveryTreeCap),
+          'Boarding Defense' => percentLine(step, ceiling: LifeBalance.crewDefenseTreeCap),
+          _ => percentLine(step),
+        };
       case CommandTrack.navigation:
         const pattern = [
           'Sailing Speed',
@@ -549,7 +684,6 @@ class FleetProgress {
     final oldCrew = hullFor(s.hullType).crew;
     final crewFraction = (s.crewCount / oldCrew).clamp(0.0, 1.0);
     s.hullType = h.name;
-    s.cargo = min(s.cargo, h.holds);
     s.maxHullHp =
         h.hp +
         c.units(CommandTrack.hull) * LifeBalance.hullPerUnit +
@@ -567,9 +701,17 @@ class FleetProgress {
         bonus(c, ItemKind.quartermaster) * .05 +
         bonus(c, ItemKind.body) * .03;
     s.handling = c.percent(CommandTrack.navigation);
-    s.damageReduction = c.percent(CommandTrack.hull);
-    s.postHullRecovery = c.percent(CommandTrack.hull);
-    s.postCrewRecovery = c.percent(CommandTrack.crew);
+    // Final corrections pass 2026-09-20: these four are TREE SOFT CAPS
+    // (see LifeBalance's *TreeCap constants) -- the Command Tree
+    // investment alone stops contributing past this point, but
+    // equipment/other legitimate modifiers (added below) are NOT capped
+    // here; only a genuinely mechanically-necessary FINAL ceiling
+    // (finalSafetyCeiling, or an exact 100% for the two recovery
+    // facets) applies once, after everything is summed -- see the
+    // final-clamp block below the equipment loop.
+    s.damageReduction = c.percent(CommandTrack.hull).clamp(0, LifeBalance.damageReductionTreeCap);
+    s.postHullRecovery = c.percent(CommandTrack.hull).clamp(0, LifeBalance.postHullRecoveryTreeCap);
+    s.postCrewRecovery = c.percent(CommandTrack.crew).clamp(0, LifeBalance.postCrewRecoveryTreeCap);
     s.ordnance = 'standard';
     // Tree-sourced secondary bonuses (each track's own base value, before
     // equipment's own += on top of it below) -- gives every Command Tree
@@ -577,12 +719,13 @@ class FleetProgress {
     // repeated stat, using fields this game already resolves in combat/
     // port logic. See CommandProgress.nextBenefit for the matching
     // player-facing description of each.
-    s.crewDefense = c.percent(CommandTrack.crew);
+    s.crewDefense = c.percent(CommandTrack.crew).clamp(0, LifeBalance.crewDefenseTreeCap);
     s.openingVolley = 0;
     s.penaltyMitigation = c.percent(CommandTrack.navigation);
     s.minimumMovement = 0;
     s.economyBonus = c.percent(CommandTrack.portRelations);
     s.fieldRepairBonus = 0;
+    s.holdBonus = 0;
     s.openingAttack = c.percent(CommandTrack.firepower);
     for (final id in c.equipped.values) {
       final i = item(id)!;
@@ -602,6 +745,12 @@ class FleetProgress {
             s.crewDefense += n;
           case 'recovery':
             s.postCrewRecovery += n;
+          case 'hullRecovery':
+            // Final corrections pass 2026-09-20: no equipment uses this
+            // key yet, but it exists so a future hull-repair item can
+            // push Post-Battle Hull Repair past its tree soft cap, the
+            // same way 'recovery' already does for the crew side.
+            s.postHullRecovery += n;
           case 'defense':
             s.damageReduction += n;
           case 'repair':
@@ -616,6 +765,13 @@ class FleetProgress {
             s.openingAttack += n;
           case 'volley':
             s.openingVolley += n;
+          case 'hold':
+            // Port Relations balance pass 2026-09-20: no equipment uses
+            // this key yet, but the field/formula exist so a future
+            // cargo/hold item works without further plumbing -- see
+            // effectiveHoldCapacity's own doc comment for how this
+            // combines with the Fleet Tree's flat +50.
+            s.holdBonus += n;
         }
       }
       if (d.shot != null) {
@@ -625,10 +781,60 @@ class FleetProgress {
         s.firepower *= 1 + i.rarity.index * .02;
       }
     }
-    s.crewDefense = s.crewDefense.clamp(0, .35);
-    s.damageReduction = s.damageReduction.clamp(0, .35);
-    s.postCrewRecovery = s.postCrewRecovery.clamp(0, .35);
-    s.economyBonus = s.economyBonus.clamp(0, .2);
+    // Final corrections pass 2026-09-20: damageReduction/crewDefense
+    // were assigned their TREE soft cap earlier (before the equipment
+    // loop); equipment has since stacked on top, uncapped. NOW, after
+    // everything is summed, apply the one genuinely mechanically-
+    // necessary FINAL ceiling (finalSafetyCeiling, .90 -- not the .35
+    // tree cap, which would silently waste any equipment investment
+    // past it). Both are read as `(1 - x)` multipliers directly in
+    // combat math (see encounter_result.dart, which independently
+    // re-clamps damageReduction at this SAME final ceiling), and both
+    // are referenced by the in-progress-encounter persistence
+    // validation in pirates_voyage.dart -- also updated to this ceiling.
+    s.crewDefense = s.crewDefense.clamp(0, LifeBalance.finalSafetyCeiling);
+    s.damageReduction = s.damageReduction.clamp(0, LifeBalance.finalSafetyCeiling);
+    // postCrewRecovery/postHullRecovery: tree soft-capped at 50% above;
+    // equipment ('recovery'/'hullRecovery') can push either past that,
+    // up to an EXACT 100% here -- not finalSafetyCeiling's .90, since
+    // these are read as a flat multiplier against damage/crew actually
+    // LOST this battle (pirates_voyage.dart): recovering more than
+    // 100% of what was lost is mathematically meaningless, not just
+    // "very strong", so 100% is this pair's true, exact natural
+    // ceiling rather than an arbitrary safety margin.
+    s.postCrewRecovery = s.postCrewRecovery.clamp(0, 1.0);
+    s.postHullRecovery = s.postHullRecovery.clamp(0, 1.0);
+    // economyBonus (Trade Profit Bonus): genuinely uncapped -- see Fix
+    // for Port Relations trade-profit double counting: WorldLife no
+    // longer re-adds bonus(portRelations) on top of this (which already
+    // contains it once), and its consumers (sale-price/prize-reward
+    // multipliers, cost-discount formulas) either have no ceiling or
+    // self-protect independently at their own use site.
+    // Cargo actually on board can never exceed the ship's real effective
+    // capacity (hull base + Fleet Tree + equipment, absolute-capped at
+    // 100 -- see effectiveHoldCapacity). Computed last, after holdBonus
+    // is finalized above.
+    s.cargo = min(s.cargo, effectiveHoldCapacity(s));
+  }
+
+  /// A ship's real effective cargo-hold capacity: hull base (fixed per
+  /// hull, preserving hull identity -- a Fluyt stays a better cargo ship
+  /// than a Sloop) plus the Fleet Tree's flat +1-per-step bonus (shared
+  /// by every player ship, 0-50 total, see FleetTrack.shipHold), then
+  /// equipment's own percentage bonus (Vessel.holdBonus) on top -- with
+  /// an absolute hard cap of 100 regardless of how those combine (Port
+  /// Relations balance pass 2026-09-20). NPCs (no CommandProgress entry)
+  /// get their unmodified hull base only -- this bonus is explicitly
+  /// fleet-wide for the PLAYER's own ships, never NPCs.
+  int effectiveHoldCapacity(Vessel s) {
+    final base = hullFor(s.hullType).holds;
+    final c = commands[s.id];
+    if (c == null) return min(100, base);
+    return Balance.combinedHoldCapacity(
+      baseHold: base,
+      shipHoldTreeLevel: tree[FleetTrack.shipHold] ?? 0,
+      equipmentBonus: s.holdBonus,
+    );
   }
 
   /// Picks a rarity for a roll from [source]'s exact target distribution

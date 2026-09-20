@@ -161,8 +161,13 @@ void main() {
       final before = {for (final s in sim.ships) s.id: s.position};
       sim.update(1 / 60);
       for (final ship in sim.ships.where((s) => !s.playerOwned && s.atSea)) {
-        idle[ship.id] = before[ship.id]!.distanceTo(ship.position) < .00001
-            ? idle[ship.id]! + 1
+        // A ship that appeared THIS tick (e.g. the money ship spawning
+        // mid-run -- see Vessel.isMoneyShip) has no recorded "before"
+        // position yet; it can't be idle before it has existed for even
+        // one tick, so it simply starts its own idle count at 0.
+        final previous = before[ship.id];
+        idle[ship.id] = previous != null && previous.distanceTo(ship.position) < .00001
+            ? (idle[ship.id] ?? 0) + 1
             : 0;
         expect(idle[ship.id], lessThan(1500), reason: ship.name);
       }

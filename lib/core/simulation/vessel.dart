@@ -26,10 +26,33 @@ class Vessel {
   double chainPenalty = 0, penaltyMitigation = 0, minimumMovement = 0;
   double crewDefense = 0, openingVolley = 0, openingAttack = 0;
   double economyBonus = 0, fieldRepairBonus = 0;
+  // Port Relations balance pass 2026-09-20: equipment's own cargo/hold
+  // percentage bonus (see FleetProgress.effectiveHoldCapacity) -- kept
+  // separate from the Fleet Tree's own flat +1-per-step hold bonus so
+  // "equipment bonuses do NOT consume any portion of the tree's +50
+  // progression" (they're two independent additive/multiplicative
+  // inputs to the same effective-capacity formula, not a shared pool).
+  double holdBonus = 0;
   double npcTolerance = .3, npcResolve = 1, npcPersistence = 30;
   bool fleeing = false;
   String? threatId, pursuitId, ignoredTarget;
   double fleeTime = 0, pursuitTime = 0, decisionWait = 0, ignoreTime = 0;
+  // Final corrections pass 2026-09-20, rigging-mitigation audit: the
+  // inner `.clamp(0, .6)` on penaltyMitigation is NOT mechanically
+  // required. The OUTER `.clamp(minimumMovement, 1.0)` on the whole
+  // expression already fully protects this formula on its own -- even
+  // if penaltyMitigation reached 1.0 (fully canceling chainPenalty's
+  // speed impact) or grew arbitrarily larger, the term inside the outer
+  // parens could go negative, but the outer clamp catches that and
+  // simply floors movementFactor at minimumMovement; it can never
+  // exceed 1.0 (faster than undamaged) regardless of how large
+  // penaltyMitigation gets. So unlike Damage Reduction/Boarding Defense
+  // (where removing their inner clamp would let (1-x) go negative with
+  // NOTHING else protecting it), this .6 is an ordinary inherited
+  // BALANCE number, not a genuine mechanical ceiling -- left UNCHANGED
+  // this pass pending an explicit target value (Rigging-Damage
+  // Mitigation has no tree-soft-cap number assigned in this design
+  // brief the way Damage Reduction/Boarding Defense/etc. do).
   double get movementFactor =>
       (1 - chainPenalty * (1 - penaltyMitigation.clamp(0, .6))).clamp(
         minimumMovement,
@@ -49,6 +72,13 @@ class Vessel {
       (1 + riggingBonus) *
       movementFactor;
   bool atSea = true, hunter = false, returnToPort = false, retiring = false;
+  // Saturday repair pass 2026-09-20: the map-based "money ship" bonus
+  // (replaces the old rewarded-ad Gold button) -- an ordinary, ephemeral
+  // NPC Vessel tapped for a flat gold reward, then removed. Deliberately
+  // NOT persisted (see VoyageStore.save filtering these out): its
+  // presence and spawn timer are session-only, matching a lightweight,
+  // occasional bonus rather than durable game state.
+  bool isMoneyShip = false;
   int attacksSincePort = 0;
   double respawnRemaining = 0;
   double damageReduction = 0, postHullRecovery = 0, postCrewRecovery = 0;

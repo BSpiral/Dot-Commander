@@ -24,18 +24,35 @@ void main() {
         'Next level: +${entry.value} Hull capacity',
       );
     }
-    // Levels 0/100/500 all land on navigation's rotation index 0
-    // ("Sailing Speed") -- 100 and 500 are both multiples of the 4-step
-    // pattern length, matching the varied-rotation coverage below.
-    for (final entry in {0: '0.01', 100: '0.02', 500: '0.06'}.entries) {
+    // Levels 0/100/500/600 all land on navigation's rotation index 0
+    // ("Sailing Speed") -- all multiples of the 4-step pattern length,
+    // matching the varied-rotation coverage below. Correction, Port
+    // Relations balance pass 2026-09-20: Sailing Speed has no
+    // mechanical ceiling (see nextBenefit's own doc comment) -- unlike
+    // Hull/Crew's genuinely-capped facets below, it keeps growing
+    // (unevenly, since later 100-level cycles are worth more per level)
+    // all the way to level 1100, never "cap reached".
+    for (final entry in {0: '0.1', 100: '0.2', 500: '0.6', 600: '0.7'}.entries) {
       c.tree[CommandTrack.navigation] = entry.key;
       expect(
         c.nextBenefit(CommandTrack.navigation),
         'Next level: +${entry.value}% Sailing Speed',
       );
     }
-    c.tree[CommandTrack.navigation] = 600;
-    expect(c.nextBenefit(CommandTrack.navigation), contains('+0%'));
+    // Hull's Damage Reduction and Crew's Boarding Defense DO keep a
+    // genuine mechanical ceiling (.35 -- see FleetProgress.apply): once
+    // LifeBalance.percent(level) reaches .35, nextBenefit correctly
+    // reports "cap reached" for THOSE specific facets, even though
+    // Sailing Speed (above) and other uncapped facets keep growing at
+    // the exact same tree levels.
+    c.tree[CommandTrack.hull] = 901; // rotation index 1 -> 'Damage Reduction'
+    expect(LifeBalance.percent(901), greaterThan(.35));
+    expect(c.nextBenefit(CommandTrack.hull), contains('+0%'));
+    expect(c.nextBenefit(CommandTrack.hull), contains('cap reached'));
+    c.tree[CommandTrack.crew] = 903; // rotation index 3 -> 'Boarding Defense'
+    expect(LifeBalance.percent(903), greaterThan(.35));
+    expect(c.nextBenefit(CommandTrack.crew), contains('+0%'));
+    expect(c.nextBenefit(CommandTrack.crew), contains('cap reached'));
     c.tree[CommandTrack.hull] = 1100;
     expect(c.nextBenefit(CommandTrack.hull), 'Maximum level reached');
     c.tree[CommandTrack.firepower] = 100;
@@ -126,7 +143,16 @@ void main() {
       v.progress.apply(ship);
       final expected = LifeBalance.percent(500);
       expect(expected, greaterThan(0));
-      expect(ship.crewDefense, closeTo(expected, 1e-9));
+      // Correction, Port Relations balance pass 2026-09-20: crewDefense
+      // is one of the two facets with a genuine, deliberately-preserved
+      // mechanical ceiling (see FleetProgress.apply's own comment --
+      // read as `1 - crewDefense` directly in combat math, so it must
+      // stay under 1.0) -- at level 500 the raw percent (1.5) is well
+      // past that .35 ceiling, so the field correctly clamps rather than
+      // matching the raw value. penaltyMitigation/economyBonus/
+      // openingAttack have no such ceiling and reach the vessel exactly
+      // as computed.
+      expect(ship.crewDefense, closeTo(.35, 1e-9));
       expect(ship.penaltyMitigation, closeTo(expected, 1e-9));
       expect(ship.economyBonus, closeTo(expected, 1e-9));
       expect(ship.openingAttack, closeTo(expected, 1e-9));
@@ -154,8 +180,14 @@ void main() {
       expect(LifeBalance.serviceSeconds(5, v.life.serviceMultiplier(s)), 2.5);
       expect(LifeBalance.serviceSeconds(1, v.life.serviceMultiplier(s)), .75);
       expect(LifeBalance.serviceSeconds(0, v.life.serviceMultiplier(s)), 0);
+      // Final corrections pass 2026-09-20: Port Service Speed's tree
+      // soft cap was raised from 20% to 50% (LifeBalance.
+      // portServiceSpeedTreeCap). A crew tree level of 600 pushes the
+      // raw (uncapped) tree contribution to 210%, which now saturates
+      // at the new 50% cap -- base = 1 - .5 = .5, not the old 20%-cap
+      // era's .8.
       v.progress.commands[s.id]!.tree[CommandTrack.crew] = 600;
-      expect(LifeBalance.serviceSeconds(10, v.life.serviceMultiplier(s)), 4);
+      expect(LifeBalance.serviceSeconds(10, v.life.serviceMultiplier(s)), 2.5);
       v.progress.inventory.add(
         const EquipmentItem(
           'specialist',
@@ -171,14 +203,14 @@ void main() {
           10,
           v.life.serviceMultiplier(s, specialist: 'carpenter'),
         ),
-        closeTo(3.6, .000001),
+        closeTo(2.25, .000001),
       );
       expect(
         LifeBalance.serviceSeconds(
           10,
           v.life.serviceMultiplier(s, specialist: 'bosun'),
         ),
-        4,
+        2.5,
       );
     },
   );

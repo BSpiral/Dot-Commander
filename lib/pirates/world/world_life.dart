@@ -178,9 +178,23 @@ class WorldLife {
         ? 'carpenter'
         : (v.progress.item(c.equipped[ItemKind.bosun])?.specialist ??
               v.progress.item(c.equipped[ItemKind.quartermaster])?.specialist);
-    final modifier =
-        1 -
-        (bonus(s, CommandTrack.portRelations) + s.economyBonus).clamp(0, .35);
+    // Final corrections pass 2026-09-20: fixed the same trade-profit
+    // double count as startPort (s.economyBonus already contains
+    // bonus(portRelations) once -- see FleetProgress.apply), and split
+    // "tree soft cap" from "final safety ceiling": the tree-only
+    // contribution stops growing at fieldRepairDiscountTreeCap (35%,
+    // unchanged number, now correctly scoped as tree-only rather than
+    // final), while portRelations' own equipment/other bonus can push
+    // the total further, up to finalSafetyCeiling (90%) -- this
+    // formula has NO other protection at its use site below, so
+    // dropping the final ceiling entirely would let field-repair price
+    // go negative (the game paying the player), a genuine mechanical
+    // requirement, not an inherited generic cap.
+    final portRelationsTree = bonus(s, CommandTrack.portRelations);
+    final portRelationsEquipment = s.economyBonus - portRelationsTree;
+    final discount = (portRelationsTree.clamp(0, LifeBalance.fieldRepairDiscountTreeCap) + portRelationsEquipment)
+        .clamp(0, LifeBalance.finalSafetyCeiling);
+    final modifier = 1 - discount;
     if (specialist == 'carpenter') {
       final amount = min(
         LifeBalance.fieldLimit.toDouble() + s.fieldRepairBonus,
@@ -266,25 +280,54 @@ class WorldLife {
         log(s, 'Loyal-visit bonus: +1 gem');
       }
     }
-    final port = (bonus(s, CommandTrack.portRelations) + s.economyBonus).clamp(
-          0,
-          .35,
-        ),
-        hull = bonus(s, CommandTrack.hull),
-        crew = bonus(s, CommandTrack.crew);
-    final capacity = (LifeBalance.serviceCapacity * (1 + port)).floor();
-    final repair = min(max(0.0, s.maxHullHp - s.hullHp), capacity.toDouble());
+    // Final corrections pass 2026-09-20, fixing Port Relations
+    // trade-profit double counting: s.economyBonus ALREADY equals
+    // c.percent(portRelations) + equipment (see FleetProgress.apply) --
+    // it must not be added to bonus(portRelations) again on top of
+    // itself (the previous `bonus(...) + s.economyBonus` pattern
+    // double-counted the tree contribution). tradeBonus below is the
+    // single, correctly-counted value for the sale-price multiplier
+    // (no ceiling -- Trade Profit Bonus is uncapped).
+    final tradeBonus = s.economyBonus;
+    final hull = bonus(s, CommandTrack.hull), crew = bonus(s, CommandTrack.crew);
+    // Port Service Discount: the TREE portion (hull + portRelations,
+    // matching the pre-existing blended structure) is soft-capped at
+    // portServiceDiscountTreeCap (50%, raised from 20%); portRelations'
+    // own equipment/other bonus -- isolated from economyBonus so the
+    // tree portion already counted above isn't counted twice -- can
+    // push the final discount further, up to finalSafetyCeiling (90%).
+    // Repair and crew-refill get their own discount (hull vs crew tree
+    // contribution differs) but share the same portRelations term,
+    // matching the original formula's structure.
+    final portRelationsTree = bonus(s, CommandTrack.portRelations);
+    final portRelationsEquipment = s.economyBonus - portRelationsTree;
+    final repairDiscount = ((hull + portRelationsTree).clamp(0, LifeBalance.portServiceDiscountTreeCap) + portRelationsEquipment)
+        .clamp(0, LifeBalance.finalSafetyCeiling);
+    final crewDiscount = ((crew + portRelationsTree).clamp(0, LifeBalance.portServiceDiscountTreeCap) + portRelationsEquipment)
+        .clamp(0, LifeBalance.finalSafetyCeiling);
+    // Port Relations balance pass 2026-09-20: cargo/repair-per-visit
+    // capacity used to passively ride the SAME `port` value as the
+    // price discount/trade bonus (capped at a barely-visible +30% even
+    // at full investment). Both are now their own explicit, much
+    // longer-ranged integer progressions of the SAME portRelations
+    // level -- see CommandProgress.portCargoSupply/portRepairSupply.
+    // Crew refill keeps the OLD flat base (10) unscaled -- no new
+    // progression was requested for it this pass.
+    final cmd = v.progress.commands[s.id];
+    final cargoSupply = cmd?.portCargoSupply ?? LifeBalance.cargoPortCapacity;
+    final repairSupply = cmd?.portRepairSupply ?? LifeBalance.serviceCapacity;
+    final repair = min(max(0.0, s.maxHullHp - s.hullHp), repairSupply.toDouble());
     final refill = min(
       max(0, hullFor(s.hullType).crew - s.crewCount),
-      capacity,
+      LifeBalance.serviceCapacity,
     );
     final w = PortWork(
       s.id,
       repair,
       refill,
-      (repair * LifeBalance.repairPrice * (1 - min(.2, hull + port))).ceil(),
-      (refill * LifeBalance.crewPrice * (1 - min(.2, crew + port))).ceil(),
-      (LifeBalance.cargoPortCapacity * (1 + port)).floor(),
+      (repair * LifeBalance.repairPrice * (1 - repairDiscount)).ceil(),
+      (refill * LifeBalance.crewPrice * (1 - crewDiscount)).ceil(),
+      cargoSupply,
     );
     works[s.id] = w;
     v.heldShips.add(s.id);
@@ -292,7 +335,7 @@ class WorldLife {
     log(s, 'Arrived ${s.destination?.name}');
     final sold = min(s.cargo, w.buyLimit);
     s.cargo -= sold;
-    final sale = (sold * LifeBalance.cargoSell * (1 + port)).floor();
+    final sale = (sold * LifeBalance.cargoSell * (1 + tradeBonus)).floor();
     if (s.playerOwned) v.coins += sale;
     log(s, 'Sold $sold cargo +$sale coins');
     // Merchant-specific gem trickle: a legitimate gem source through
@@ -317,12 +360,17 @@ class WorldLife {
   }
 
   double serviceMultiplier(Vessel s, {String? specialist}) {
-    final base =
-        1 -
-        min(
-          LifeBalance.percentCap,
-          bonus(s, CommandTrack.crew) + bonus(s, CommandTrack.portRelations),
-        );
+    // Final corrections pass 2026-09-20: Port Service Speed's tree soft
+    // cap raised from 20% (the old generic percentCap) to 50%
+    // (portServiceSpeedTreeCap). No equipment currently feeds this
+    // formula (crew/portRelations tree bonuses only), so the extra
+    // finalSafetyCeiling clamp is a no-op today -- kept for structural
+    // consistency and so a future equipment modifier ("if supported",
+    // per the design brief) would be safely bounded without further
+    // changes here.
+    final treeSpeed = (bonus(s, CommandTrack.crew) + bonus(s, CommandTrack.portRelations))
+        .clamp(0, LifeBalance.portServiceSpeedTreeCap);
+    final base = 1 - treeSpeed.clamp(0, LifeBalance.finalSafetyCeiling);
     final command = v.progress.commands[s.id];
     final role = command?.equipped.containsKey(ItemKind.carpenter) == true
         ? 'carpenter'
@@ -366,7 +414,7 @@ class WorldLife {
     } else if (w.phase == 2) {
       s.crewCount = min(hullFor(s.hullType).crew, s.crewCount + w.crew);
       w.phase = 3;
-      final free = max(0, hullFor(s.hullType).holds - s.cargo);
+      final free = max(0, v.progress.effectiveHoldCapacity(s) - s.cargo);
       w.poor = w.poor || (s.playerOwned && v.coins < LifeBalance.cargoBuy);
       if (w.poor) {
         s.cargo = 0;

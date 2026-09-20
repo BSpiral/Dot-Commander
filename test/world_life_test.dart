@@ -29,7 +29,11 @@ void main() {
         );
       }
       expect(LifeBalance.cost(100), 808);
-      expect(LifeBalance.percent(1100), .2);
+      // Correction, Port Relations balance pass 2026-09-20: percent() no
+      // longer caps at .2 -- max level (1100) reaches 6.6 (660%) raw;
+      // individual fields that need a lower ceiling clamp it themselves
+      // in FleetProgress.apply, not here.
+      expect(LifeBalance.percent(1100), closeTo(6.6, 1e-9));
     },
   );
   test(

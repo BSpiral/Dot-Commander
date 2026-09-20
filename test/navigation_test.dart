@@ -69,17 +69,25 @@ void main() {
       final sim = createCaribbean();
       var docked = false, observed = false;
       for (var i = 0; i < 36000; i++) {
-        final before = [for (final s in sim.ships) s.position];
+        // Keyed by id (not position/index) so a ship appearing or
+        // disappearing mid-run (e.g. the money ship -- see
+        // Vessel.isMoneyShip) can't misalign a positional before/after
+        // pairing; a ship with no recorded "before" position just
+        // started existing this tick, so it has no segment to check yet.
+        final before = {for (final s in sim.ships) s.id: s.position};
         sim.update(1 / 60);
-        for (var s = 0; s < sim.ships.length; s++) {
-          expect(
-            sim.navigation.clearSegment(before[s], sim.ships[s].position),
-            isTrue,
-            reason:
-                'step $i ship $s from ${before[s].x},${before[s].y} to ${sim.ships[s].position.x},${sim.ships[s].position.y}',
-          );
-          docked |= sim.ships[s].activity == Activity.docked;
-          observed |= sim.ships[s].activity == Activity.observing;
+        for (final ship in sim.ships) {
+          final previous = before[ship.id];
+          if (previous != null) {
+            expect(
+              sim.navigation.clearSegment(previous, ship.position),
+              isTrue,
+              reason:
+                  'step $i ship ${ship.id} from ${previous.x},${previous.y} to ${ship.position.x},${ship.position.y}',
+            );
+          }
+          docked |= ship.activity == Activity.docked;
+          observed |= ship.activity == Activity.observing;
         }
       }
       expect(docked, isTrue);

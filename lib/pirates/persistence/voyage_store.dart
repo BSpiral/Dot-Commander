@@ -15,6 +15,14 @@ class VoyageStore {
   final Future<String?> Function() read;
   final Future<void> Function(String) write;
   Future<void> _pending = Future.value();
+  // Set by load() exactly when a genuine offline reward was just granted
+  // (reward > 0), so CommandScreen can show a one-time "while you were
+  // away" notification for a real cold start -- see also
+  // CommandScreen.didChangeAppLifecycleState for the background-resume
+  // equivalent path, which computes and reports its own reward directly
+  // rather than through these fields.
+  int? lastOfflineRewardCoins;
+  int? lastOfflineMinutes;
   VoyageStore({
     DateTime Function()? now,
     Future<String?> Function()? read,
@@ -146,12 +154,18 @@ class VoyageStore {
             );
       }
     }
+    // Effective capacity (hull base + Fleet Tree + equipment, see
+    // FleetProgress.effectiveHoldCapacity) rather than raw hull.holds --
+    // progress.restore already ran above, so any FleetTrack.shipHold
+    // investment is already reflected here.
     if (version < 7) {
       for (final s in loaded.ships) {
-        s.cargo = s.cargo.clamp(0, hullFor(s.hullType).holds);
+        s.cargo = s.cargo.clamp(0, loaded.progress.effectiveHoldCapacity(s));
       }
     }
-    if (loaded.ships.any((s) => s.cargo > hullFor(s.hullType).holds)) {
+    if (loaded.ships.any(
+      (s) => s.cargo > loaded.progress.effectiveHoldCapacity(s),
+    )) {
       throw const FormatException('Cargo exceeds hold capacity');
     }
     if (version == 4 || version == 5 || version == 6 || version == 7) {
@@ -160,11 +174,14 @@ class VoyageStore {
         final minutes =
             (now().millisecondsSinceEpoch - timestamp) ~/ 60000;
         final reward = Balance.offlineRewardCoins(
-          loaded.progress.tree[FleetTrack.offline] ?? 0,
-          minutes,
+          offlineTreeLevel: loaded.progress.tree[FleetTrack.offline] ?? 0,
+          elapsedMinutes: minutes,
+          fleetCoinsPerHour: Balance.fleetCoinsPerHour(loaded.ships),
         );
         if (reward > 0) {
           loaded.coins += reward;
+          lastOfflineRewardCoins = reward;
+          lastOfflineMinutes = minutes;
           // A save failure here must not discard an otherwise-valid
           // `loaded` voyage back to the caller -- it would propagate
           // out of load() entirely (this whole method's caller has no
@@ -183,8 +200,17 @@ class VoyageStore {
   }
 
   Future<void> save(PiratesVoyage simulation) {
+    // The money ship (see Vessel.isMoneyShip) is deliberately session-only
+    // -- excluded here so a save mid-visit never persists it as a
+    // permanent extra NPC, and an app restart simply starts a fresh
+    // spawn cooldown instead of needing new save-format fields for a
+    // lightweight bonus feature.
     final root =
-        jsonDecode(VoyageSnapshot.encode(simulation.ships))
+        jsonDecode(
+              VoyageSnapshot.encode(
+                simulation.ships.where((s) => !s.isMoneyShip).toList(),
+              ),
+            )
             as Map<String, dynamic>;
     root['version'] = 7;
     root['life'] = simulation.life.toJson();

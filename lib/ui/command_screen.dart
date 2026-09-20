@@ -9,7 +9,6 @@ import '../monetization/billing_service.dart';
 import '../monetization/monetization_ids.dart';
 import '../monetization/monetization_store.dart';
 import '../monetization/rewarded_chest_service.dart';
-import '../monetization/rewarded_gold_service.dart';
 import '../pirates/persistence/voyage_store.dart';
 import '../pirates/progression/fleet_progress.dart';
 import '../pirates/world/caribbean.dart';
@@ -52,14 +51,6 @@ class _CommandScreenState extends State<CommandScreen>
     },
     store: monetizationStore,
   );
-  // Reuses the crewEquipment ad unit -- the freed reward opportunity from
-  // consolidating 5 Common Chest ad rows down to 3 (see
-  // RewardedChestTile/RewardedAdGroup) is presented as this distinct,
-  // non-chest reward rather than a redundant 4th/5th chest path.
-  late final rewardedGoldService = RewardedGoldService(
-    ads: rewardedAdControllers[RewardedAdGroup.crewEquipment]!,
-    store: monetizationStore,
-  );
   late final billingService = BillingService(store: monetizationStore);
   bool ready = false, canSave = false, paused = false, hasRemoveAds = false;
   // Set when the app is backgrounded (pauseEngine), cleared on resume.
@@ -94,7 +85,9 @@ class _CommandScreenState extends State<CommandScreen>
   late Vessel selected = simulation.ships.firstWhere((s) => s.playerOwned);
   late final PiratesGame game = PiratesGame(
     simulation,
-    (ship) => setState(() => selected = ship),
+    (ship) => ship.isMoneyShip
+        ? _claimMoneyShip(ship)
+        : setState(() => selected = ship),
   );
   @override
   void initState() {
@@ -174,22 +167,36 @@ class _CommandScreenState extends State<CommandScreen>
     );
   }
 
-  Future<void> _grantAdGold() async {
-    final reward = simulation.grantAdGold();
+  /// Tapping the money ship on the map (see Vessel.isMoneyShip) -- the
+  /// replacement for the old rewarded-ad Gold button. No ad, no allowance
+  /// check: PiratesVoyage.claimMoneyShip itself is the single gate (it
+  /// returns 0, granting nothing, if [ship] isn't currently a present,
+  /// unclaimed money ship -- e.g. a stale/duplicate tap in the same
+  /// frame it despawns).
+  void _claimMoneyShip(Vessel ship) {
+    final reward = simulation.claimMoneyShip(ship.id);
+    if (reward <= 0) return;
     setState(() {});
-    await _save();
-    if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text('Received $reward coins')));
+    _save();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Claimed $reward gold from ${ship.name}!')),
+    );
   }
 
   Future<void> _load() async {
+    int? coldStartReward, coldStartMinutes;
     try {
       final loaded = await store.load();
       if (!mounted) return;
       simulation = loaded;
       canSave = true;
+      // Read-then-clear: this store instance is only ever load()ed once
+      // per app run, but clearing defensively means a hot-restart-era
+      // reuse of the same store could never show the same reward twice.
+      coldStartReward = store.lastOfflineRewardCoins;
+      coldStartMinutes = store.lastOfflineMinutes;
+      store.lastOfflineRewardCoins = null;
+      store.lastOfflineMinutes = null;
     } catch (_) {
       saveError =
           'Could not load voyage. Original save preserved; autosave paused.';
@@ -199,6 +206,33 @@ class _CommandScreenState extends State<CommandScreen>
     game.selectedId = selected.id;
     setState(() => ready = true);
     saveTimer = Timer.periodic(const Duration(seconds: 5), (_) => _save());
+    if (coldStartReward != null && coldStartReward > 0) {
+      _showOfflineRewardNotification(coldStartReward, coldStartMinutes!);
+    }
+  }
+
+  /// "While you were away, your fleet earned N gold" -- the reward and
+  /// duration are always the REAL values just calculated/credited (see
+  /// callers), never estimated or hardcoded. The gold itself is already
+  /// applied to `simulation.coins` (and already attempted to save) before
+  /// this is ever called, so dismissing the SnackBar cannot lose it.
+  /// Reuses the same ScaffoldMessenger SnackBar idiom already used for
+  /// every other reward in this screen (chest/gold grants) rather than a
+  /// bespoke dialog, per Dot Commander's existing visual language.
+  void _showOfflineRewardNotification(int reward, int minutes) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final h = minutes ~/ 60, m = minutes % 60;
+      final duration = h > 0 ? '${h}h ${m}m' : '${m}m';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'While you were away, your fleet earned $reward gold ($duration).',
+          ),
+          duration: const Duration(seconds: 5),
+        ),
+      );
+    });
   }
 
   Future<void> _save() async {
@@ -224,12 +258,14 @@ class _CommandScreenState extends State<CommandScreen>
       if (backgroundedAt != null) {
         final minutes = _now().difference(backgroundedAt).inMinutes;
         final reward = Balance.offlineRewardCoins(
-          simulation.progress.tree[FleetTrack.offline] ?? 0,
-          minutes,
+          offlineTreeLevel: simulation.progress.tree[FleetTrack.offline] ?? 0,
+          elapsedMinutes: minutes,
+          fleetCoinsPerHour: Balance.fleetCoinsPerHour(simulation.ships),
         );
         if (reward > 0) {
           setState(() => simulation.coins += reward);
           _save();
+          _showOfflineRewardNotification(reward, minutes);
         }
       }
       game.resumeEngine();
@@ -705,10 +741,8 @@ class _CommandScreenState extends State<CommandScreen>
             }),
             hasRemoveAds: hasRemoveAds,
             rewardedChests: rewardedChestService,
-            rewardedGold: rewardedGoldService,
             billing: billingService,
             onRewardedChestGranted: _grantRewardedChest,
-            onAdGoldGranted: _grantAdGold,
           ),
         ),
       ],

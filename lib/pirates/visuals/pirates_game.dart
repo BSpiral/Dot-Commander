@@ -13,6 +13,10 @@ class PiratesGame extends FlameGame {
   final void Function(Vessel) onSelected;
   String selectedId;
   double fps = 0, locateRemaining = 0;
+  // Drives the money ship's glowing pulse ring (see ShipComponent.render) --
+  // a plain elapsed-seconds clock, the same role `pulsePhase` plays for
+  // the Deck's own pulsing markers elsewhere in the UI.
+  double elapsedSeconds = 0;
   double _accumulator = 0;
   double shipScale = 1;
   final _rendered = <String>{};
@@ -60,6 +64,7 @@ class PiratesGame extends FlameGame {
       if (_rendered.add(ship.id)) world.add(ShipComponent(ship, this));
     }
     locateRemaining = math.max(0, locateRemaining - dt);
+    elapsedSeconds += dt;
     if (dt > 0) fps = fps == 0 ? 1 / dt : fps * .95 + .05 / dt;
     _accumulator += dt.clamp(0, .1);
     while (_accumulator >= 1 / 60) {
@@ -92,6 +97,50 @@ class ShipComponent extends PositionComponent with TapCallbacks {
   @override
   void render(Canvas canvas) {
     if (!ship.atSea) return;
+    if (ship.isMoneyShip) {
+      // Distinct glowing/pulsating gold ring so the money ship visually
+      // reads as "tap this" from a glance -- the same pulsing-ring
+      // idiom already used for the "locate" cue below, just its own
+      // color and always-on instead of a brief flash.
+      final pulse = 0.5 + 0.5 * math.sin(chart.elapsedSeconds * 3);
+      canvas.drawCircle(
+        const Offset(24, 24),
+        26 + pulse * 6,
+        Paint()
+          ..color = const Color(0xfffff1b8).withValues(alpha: .35 + .35 * pulse)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 3,
+      );
+      // Final corrections pass 2026-09-20: the ring alone wasn't the
+      // requested identifier -- a clearly-legible floating $ glyph,
+      // specific to the money ship, gently bobbing above it (drawn in
+      // this SAME ship-local canvas space, so it automatically follows
+      // the ship as it moves/rotates the same way the ring does; it
+      // vanishes the instant this component is removed, i.e. the exact
+      // moment the ship is claimed or despawns -- see PiratesGame.update's
+      // diff against simulation.ships, no separate lifecycle needed).
+      final bob = math.sin(chart.elapsedSeconds * 2.4) * 3;
+      final glyphCenter = Offset(24, -10 + bob);
+      final glyphPainter = TextPainter(
+        text: const TextSpan(
+          text: r'$',
+          style: TextStyle(
+            color: Color(0xfffff1b8),
+            fontSize: 26,
+            fontWeight: FontWeight.w900,
+            shadows: [
+              Shadow(color: Colors.black, blurRadius: 2, offset: Offset(1, 1)),
+              Shadow(color: Colors.black, blurRadius: 4),
+            ],
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      glyphPainter.paint(
+        canvas,
+        glyphCenter - Offset(glyphPainter.width / 2, glyphPainter.height / 2),
+      );
+    }
     if (ship.activity == Activity.engaged) {
       final pen = Paint()
         ..color = const Color(0xffff9872)

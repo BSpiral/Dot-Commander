@@ -33,13 +33,20 @@ void main() {
       },
     );
     final v = createCaribbean();
-    v.progress.tree[FleetTrack.offline] = 500;
+    v.progress.tree[FleetTrack.offline] = 500; // cap only, see Saturday repair pass 2026-09-20
+    final fleetRate = Balance.fleetCoinsPerHour(v.ships);
     await store.save(v);
-    now = now.add(const Duration(hours: 12));
+    now = now.add(const Duration(hours: 12)); // beyond the 6h cap this tree level earns
     final loaded = await store.load();
-    expect(loaded.coins, 180);
+    final expectedReward = Balance.offlineRewardCoins(
+      offlineTreeLevel: 500,
+      elapsedMinutes: 12 * 60,
+      fleetCoinsPerHour: fleetRate,
+    );
+    expect(expectedReward, greaterThan(0));
+    expect(loaded.coins, expectedReward);
     expect(loaded.progress.offlineCapMinutes, 360);
-    expect((await store.load()).coins, 180);
+    expect((await store.load()).coins, expectedReward);
   });
   test(
     'repair and recruitment quotes have explicit baselines and modifier inputs',

@@ -1,8 +1,44 @@
 /// Central tuning for the world-life pass. Equipment/chest tables stay separate.
 abstract final class LifeBalance {
   static const cycleLevels = 100, cycles = 11, maxLevels = cycleLevels * cycles;
-  static const percentCap = .20;
   static const commandPrices = [0, 10000, 50000, 250000, 1000000];
+
+  // Final progression/balance corrections pass, 2026-09-20: these are
+  // TREE SOFT CAPS -- how far the Command Tree investment ALONE can push
+  // a facet, before equipment/officers/figureheads/other legitimate
+  // modifiers are added on top. They are deliberately NOT final ceilings
+  // -- a well-equipped ship is meant to be able to exceed them. See
+  // FleetProgress.apply (Damage Reduction, Boarding Defense, Post-Battle
+  // Hull/Crew Recovery) and WorldLife (Field Repair Discount, Port
+  // Service Discount, Port Service Speed) for exactly where each is
+  // consumed, and finalSafetyCeiling below for the genuinely-necessary
+  // final bound that applies AFTER equipment stacks on top.
+  static const damageReductionTreeCap = .35,
+      crewDefenseTreeCap = .35,
+      postHullRecoveryTreeCap = .50,
+      postCrewRecoveryTreeCap = .50,
+      fieldRepairDiscountTreeCap = .35,
+      portServiceDiscountTreeCap = .50,
+      portServiceSpeedTreeCap = .50;
+
+  // The one genuinely mathematically-necessary final bound shared by
+  // every "(1 - x)" cost/damage-reduction/service-time-shaped formula in
+  // the game (Damage Reduction, Boarding Defense, Field Repair Discount,
+  // Port Service Discount, Port Service Speed) -- NOT a tree soft cap;
+  // equipment/other legitimate modifiers CAN push a stat's real total
+  // past its own tree cap above, all the way up to this ceiling. .90
+  // (not 100%, and deliberately not reusing any of the .35/.50 tree
+  // numbers) leaves a mandatory 10% floor -- damage taken, cost paid, or
+  // service time required can shrink a great deal under strong
+  // investment, but literal zero (true immunity / free / instant
+  // service) is a genuinely broken state, not just a strong one.
+  // Post-Battle Hull/Crew Recovery do NOT use this constant -- their own
+  // final ceiling is an EXACT 100% (see FleetProgress.apply), since
+  // recovering more than what was actually lost is mathematically
+  // meaningless rather than merely "very strong."
+  static const finalSafetyCeiling = .90;
+
+
   static int cycle(int total) => (total ~/ cycleLevels).clamp(0, cycles - 1);
   static int level(int total) => total >= maxLevels ? 100 : total % cycleLevels;
   static double rewardUnits(int total) {
@@ -15,8 +51,21 @@ abstract final class LifeBalance {
     return result;
   }
 
-  static double percent(int total) =>
-      (rewardUnits(total) * .0001).clamp(0, percentCap);
+  // Port Relations balance pass 2026-09-20, corrected twice same day:
+  // raised from .0001 (0.01% per reward-unit) to .001 (0.1% per
+  // reward-unit) -- every percent-style Command Tree facet shares this
+  // one formula, so this single change is the "0.01% -> 0.1%" global
+  // strength bump, growing across the FULL 1100-level tree with no
+  // generic cap.
+  //
+  // This raw value is the TREE'S OWN contribution only. Facets with a
+  // genuine mechanical ceiling apply their OWN tree soft cap (see the
+  // *TreeCap constants above) where this is consumed, separately from
+  // whatever equipment/other legitimate modifiers add on top, which are
+  // bounded only by finalSafetyCeiling (or an exact 100% for the two
+  // recovery facets) -- see FleetProgress.apply and WorldLife's
+  // individual formulas for exactly how each combines the two.
+  static double percent(int total) => rewardUnits(total) * .001;
   static int cost(int total) {
     final c = cycle(total) + 1, l = level(total);
     return (1 + total + l * l ~/ 100) * c * c * c;
