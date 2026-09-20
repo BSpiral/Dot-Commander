@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   Pre-Android-12 (API < 31) Auto Backup rules. Excludes the shared_preferences
-  plugin's DataStore file -- the sole backing store for both the voyage save
+  plugin's DataStore file, the sole backing store for both the voyage save
   (VoyageStore, see lib/pirates/persistence/voyage_store.dart) and the local
-  monetization cache (MonetizationStore) -- so a reinstall never silently
+  monetization cache (MonetizationStore), so a reinstall never silently
   restores stale local state from Google's cloud backup. Real entitlements
   are re-verified from Play Billing on every start regardless; the voyage
   save has no migration path for old test saves, so restoring an old one

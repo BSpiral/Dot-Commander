@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Android 12+ (API 31+) backup/transfer rules -- see backup_rules.xml for the
+  Android 12+ (API 31+) backup/transfer rules, see backup_rules.xml for the
   pre-31 equivalent and the shared rationale. Excludes the same file from
   both cloud backup and device-to-device transfer, since a "new phone"
   restore should behave identically to a plain reinstall here: no stale
