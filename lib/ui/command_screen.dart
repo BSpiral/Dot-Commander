@@ -79,6 +79,14 @@ class _CommandScreenState extends State<CommandScreen>
   int savedRevision = 0;
   String? shownBattle;
   String? saveError;
+  // Incompatible-save recovery pass: true only for the specific "the old
+  // save on disk failed to load" case (never for a transient save-retry
+  // failure, and never for a failed debug reset) -- see _load()'s catch
+  // block. Gates the "Start New Voyage" action; until the player
+  // explicitly taps it, canSave stays false (see _load()) so the
+  // preserved old save is never overwritten and autosave stays paused,
+  // exactly as before this pass.
+  bool incompatibleSave = false;
   Timer? saveTimer, timer;
   StreamSubscription<bool>? _entitlementSub;
   final _gameKey = GlobalKey();
@@ -200,6 +208,7 @@ class _CommandScreenState extends State<CommandScreen>
     } catch (_) {
       saveError =
           'Could not load voyage. Original save preserved; autosave paused.';
+      incompatibleSave = true;
     }
     if (!mounted) return;
     selected = simulation.ships.firstWhere((s) => s.playerOwned);
@@ -321,6 +330,48 @@ class _CommandScreenState extends State<CommandScreen>
         ready = true;
         canSave = couldSave;
         saveError = 'Debug reset failed; current voyage retained.';
+      });
+      if (!paused) game.resumeEngine();
+    }
+  }
+
+  /// Incompatible-save recovery pass. Only reachable while
+  /// [incompatibleSave] is true (the old save on disk failed to load --
+  /// see _load()'s catch block), so the button that calls this is only
+  /// ever shown in exactly that state. No confirmation dialog: the old
+  /// save is already unusable and untouched by everything up to this
+  /// point (canSave has stayed false since load failed, so nothing has
+  /// written over it) -- this is the explicit action itself, not a
+  /// second gate in front of it. Mirrors _debugReset's own proven
+  /// shape (pause, save a fresh voyage over the old file, replace this
+  /// screen with a new one that loads it cleanly) rather than inventing
+  /// a different recovery path -- deliberately NOT a migration of the
+  /// old save's contents, per this pass's own explicit scope.
+  Future<void> _startNewVoyage() async {
+    if (!incompatibleSave) return;
+    game.pauseEngine();
+    setState(() {
+      ready = false;
+      canSave = false;
+    });
+    try {
+      await store.save(createCaribbean(encountersEnabled: true));
+      if (!mounted) return;
+      unawaited(
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute<void>(builder: (_) => CommandScreen(store: store)),
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        ready = true;
+        // canSave and incompatibleSave both stay exactly as they were --
+        // starting the new voyage itself failed, so the original
+        // protection (never overwrite the old save, keep autosave
+        // paused) must stay in force, same as before this attempt.
+        saveError =
+            'Could not start a new voyage. Original save preserved; autosave paused.';
       });
       if (!paused) game.resumeEngine();
     }
@@ -655,12 +706,35 @@ class _CommandScreenState extends State<CommandScreen>
       children: [
         if (saveError != null)
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Text(
-              saveError!,
-              maxLines: 2,
-              style: const TextStyle(color: Colors.amber, fontSize: 11),
+            padding: EdgeInsets.symmetric(
+              horizontal: 12,
+              vertical: incompatibleSave ? 6 : 0,
             ),
+            child: incompatibleSave
+                ? Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(
+                        saveError!,
+                        maxLines: 2,
+                        style: const TextStyle(
+                          color: Colors.amber,
+                          fontSize: 11,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      ElevatedButton(
+                        key: const Key('start_new_voyage_button'),
+                        onPressed: _startNewVoyage,
+                        child: const Text('Start New Voyage'),
+                      ),
+                    ],
+                  )
+                : Text(
+                    saveError!,
+                    maxLines: 2,
+                    style: const TextStyle(color: Colors.amber, fontSize: 11),
+                  ),
           ),
         // Roughly half the previous 56px height, and icon-only (no
         // label) -- the existing icon set already reads fine on its own
