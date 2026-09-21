@@ -72,12 +72,14 @@ class Vessel {
       (1 + riggingBonus) *
       movementFactor;
   bool atSea = true, hunter = false, returnToPort = false, retiring = false;
-  // Saturday repair pass 2026-09-20: the map-based "money ship" bonus
-  // (replaces the old rewarded-ad Gold button) -- an ordinary, ephemeral
-  // NPC Vessel tapped for a flat gold reward, then removed. Deliberately
-  // NOT persisted (see VoyageStore.save filtering these out): its
-  // presence and spawn timer are session-only, matching a lightweight,
-  // occasional bonus rather than durable game state.
+  // Saturday repair pass 2026-09-20: the map-based "money ship" bonus --
+  // an ordinary, ephemeral NPC Vessel. Tapping/catching it is a
+  // rewarded-ad opportunity (see CommandScreen._claimMoneyShip and
+  // RewardedMoneyShipService); only a completed ad grants its real
+  // fleetCoinsPerHour reward, then removes it. Deliberately NOT
+  // persisted (see VoyageStore.save filtering these out): its presence
+  // and spawn timer are session-only, matching a lightweight, occasional
+  // bonus rather than durable game state.
   bool isMoneyShip = false;
   int attacksSincePort = 0;
   double respawnRemaining = 0;

@@ -116,6 +116,13 @@ class PiratesVoyage extends Simulation {
   /// (already claimed/despawned/never existed) -- callers should treat 0
   /// as "nothing happened," not an error.
   ///
+  /// This method itself grants unconditionally once [id] is a valid
+  /// money ship -- it is NOT the gate. Live playtest correction
+  /// 2026-09-20 (second pass, same day): CommandScreen._claimMoneyShip is
+  /// the real gate, calling this only after
+  /// RewardedMoneyShipService.watch() confirms a completed rewarded ad --
+  /// catching/tapping the ship alone must never reach this method.
+  ///
   /// Live playtest repair pass 2026-09-20: the reward is one hour's worth
   /// of the player's OWN current fleet earning rate -- [Balance.
   /// fleetCoinsPerHour], the exact same canonical formula offline income

@@ -9,6 +9,7 @@ import '../monetization/billing_service.dart';
 import '../monetization/monetization_ids.dart';
 import '../monetization/monetization_store.dart';
 import '../monetization/rewarded_chest_service.dart';
+import '../monetization/rewarded_money_ship_service.dart';
 import '../pirates/persistence/voyage_store.dart';
 import '../pirates/progression/fleet_progress.dart';
 import '../pirates/world/caribbean.dart';
@@ -51,6 +52,15 @@ class _CommandScreenState extends State<CommandScreen>
     },
     store: monetizationStore,
   );
+  // Live playtest correction 2026-09-20 (second pass, same day): the
+  // Money Ship is a rewarded-ad opportunity, not a direct grant -- see
+  // _claimMoneyShip. Reuses the crewEquipment ad unit for supply, the
+  // same established precedent as this project's earlier "watch an ad
+  // for gold" shop button before it moved to a map encounter (see git
+  // history) -- not a new dedicated ad unit.
+  late final rewardedMoneyShipService = RewardedMoneyShipService(
+    ads: rewardedAdControllers[RewardedAdGroup.crewEquipment]!,
+  );
   late final billingService = BillingService(store: monetizationStore);
   bool ready = false, canSave = false, paused = false, hasRemoveAds = false;
   // Set when the app is backgrounded (pauseEngine), cleared on resume.
@@ -91,12 +101,13 @@ class _CommandScreenState extends State<CommandScreen>
   StreamSubscription<bool>? _entitlementSub;
   final _gameKey = GlobalKey();
   late Vessel selected = simulation.ships.firstWhere((s) => s.playerOwned);
-  late final PiratesGame game = PiratesGame(
-    simulation,
-    (ship) => ship.isMoneyShip
-        ? _claimMoneyShip(ship)
-        : setState(() => selected = ship),
-  );
+  late final PiratesGame game = PiratesGame(simulation, (ship) {
+    if (ship.isMoneyShip) {
+      unawaited(_claimMoneyShip(ship));
+    } else {
+      setState(() => selected = ship);
+    }
+  });
   @override
   void initState() {
     super.initState();
@@ -175,15 +186,46 @@ class _CommandScreenState extends State<CommandScreen>
     );
   }
 
-  /// Tapping the money ship on the map (see Vessel.isMoneyShip) -- the
-  /// replacement for the old rewarded-ad Gold button. No ad, no allowance
-  /// check: PiratesVoyage.claimMoneyShip itself is the single gate (it
-  /// returns 0, granting nothing, if [ship] isn't currently a present,
-  /// unclaimed money ship -- e.g. a stale/duplicate tap in the same
-  /// frame it despawns).
-  void _claimMoneyShip(Vessel ship) {
+  /// Tapping/catching the money ship on the map (see Vessel.isMoneyShip)
+  /// only ever INITIATES a rewarded-ad opportunity -- it must never grant
+  /// coins by itself. Live playtest correction 2026-09-20 (second pass,
+  /// same day): an earlier pass ("the replacement for the old
+  /// rewarded-ad Gold button") lost this gating and called
+  /// PiratesVoyage.claimMoneyShip directly from the tap, handing out
+  /// coins for merely catching the ship. Restored: the reward
+  /// (claimMoneyShip's real fleetCoinsPerHour formula) is granted ONLY
+  /// after rewardedMoneyShipService.watch() reports [granted] -- the SDK
+  /// actually confirmed the ad was watched to completion. A skipped/
+  /// failed/unavailable ad grants nothing, and the ship stays on the map
+  /// exactly as it was, so the player can simply try again before it
+  /// despawns.
+  ///
+  /// This also can't be exploited by repeatedly tapping the same ship:
+  /// RewardedAdController's own busy-guard rejects a second concurrent
+  /// show() while one is already in flight (reported as [busy], not
+  /// granted), and claimMoneyShip itself is idempotent -- once the first
+  /// successful ad removes the ship from the map, any further call for
+  /// that same id returns 0.
+  Future<void> _claimMoneyShip(Vessel ship) async {
+    final outcome = await rewardedMoneyShipService.watch();
+    if (outcome != RewardedMoneyShipOutcome.granted) {
+      if (!mounted) return;
+      final message = switch (outcome) {
+        RewardedMoneyShipOutcome.granted => null, // handled above
+        RewardedMoneyShipOutcome.notAvailable => 'No ad ready yet; try again soon',
+        RewardedMoneyShipOutcome.busy => 'An ad is already showing',
+        RewardedMoneyShipOutcome.dismissedWithoutReward => 'Ad closed early; no reward',
+      };
+      if (message != null) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(message)));
+      }
+      return;
+    }
     final reward = simulation.claimMoneyShip(ship.id);
     if (reward <= 0) return;
+    if (!mounted) return;
     setState(() {});
     _save();
     ScaffoldMessenger.of(context).showSnackBar(
