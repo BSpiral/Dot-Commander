@@ -101,7 +101,12 @@ class ManagementPanel extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Hull ${ship.hullHp.toStringAsFixed(0)}/${ship.maxHullHp.toStringAsFixed(0)} • Crew ${ship.crewCount}/${hull.crew} • Cargo ${ship.cargo}/${hull.holds}',
+                // Live playtest repair pass 2026-09-20: was hull.holds
+                // (raw hull base) -- never reflected Ship Hold Fleet Tree
+                // or equipment cargo bonuses, so an investment that
+                // genuinely raised usable capacity looked like it did
+                // nothing here.
+                'Hull ${ship.hullHp.toStringAsFixed(0)}/${ship.maxHullHp.toStringAsFixed(0)} • Crew ${ship.crewCount}/${hull.crew} • Cargo ${ship.cargo}/${voyage?.progress.effectiveHoldCapacity(ship) ?? hull.holds}',
                 style: const TextStyle(fontSize: 12, color: Colors.white70),
               ),
               const SizedBox(height: 3),

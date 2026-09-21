@@ -35,7 +35,15 @@ class PiratesVoyage extends Simulation {
   // VoyageStore.save filtering isMoneyShip ships out of the snapshot), so
   // an app restart simply starts a fresh cooldown rather than needing new
   // save-format fields for a lightweight bonus feature.
-  double _moneyShipCooldownRemaining = 0, _moneyShipAliveSeconds = 0, _moneyShipCheckTimer = 0;
+  double _moneyShipCooldownRemaining = Balance.moneyShipCooldownSimSeconds,
+      _moneyShipAliveSeconds = 0;
+
+  /// A jittered cooldown (base + 0..jitter, both from Balance) -- see
+  /// Balance.moneyShipCooldownSimSeconds's own doc comment for why this
+  /// replaced the old fixed-cooldown-then-probabilistic-retry scheme.
+  double _rolledMoneyShipCooldown() =>
+      Balance.moneyShipCooldownSimSeconds +
+      rng.nextDouble() * Balance.moneyShipCooldownJitterSimSeconds;
 
   void _tickMoneyShip(double dt) {
     final existing = ships.where((s) => s.isMoneyShip).toList();
@@ -63,7 +71,7 @@ class PiratesVoyage extends Simulation {
           ships.remove(s);
         }
         _moneyShipAliveSeconds = 0;
-        _moneyShipCooldownRemaining = Balance.moneyShipCooldownSimSeconds;
+        _moneyShipCooldownRemaining = _rolledMoneyShipCooldown();
         revision++;
       }
       return;
@@ -72,12 +80,10 @@ class PiratesVoyage extends Simulation {
       _moneyShipCooldownRemaining = max(0, _moneyShipCooldownRemaining - dt);
       return;
     }
-    _moneyShipCheckTimer += dt;
-    if (_moneyShipCheckTimer < Balance.moneyShipSpawnCheckIntervalSimSeconds) {
-      return;
-    }
-    _moneyShipCheckTimer = 0;
-    if (rng.nextDouble() >= Balance.moneyShipSpawnChance) return;
+    // Deterministic once the (jittered) cooldown elapses -- see
+    // Balance.moneyShipCooldownSimSeconds's doc comment: no further
+    // chance-to-spawn gate, so pacing stays close to "one every ~10
+    // minutes" instead of a bursty/droughty random-retry distribution.
     _spawnMoneyShip();
   }
 
@@ -105,19 +111,28 @@ class PiratesVoyage extends Simulation {
     revision++;
   }
 
-  /// Claims [id]'s flat gold reward and removes it from the map. Returns
-  /// the amount granted, or 0 if [id] isn't a currently-present money
-  /// ship (already claimed/despawned/never existed) -- callers should
-  /// treat 0 as "nothing happened," not an error.
+  /// Claims [id]'s gold reward and removes it from the map. Returns the
+  /// amount granted, or 0 if [id] isn't a currently-present money ship
+  /// (already claimed/despawned/never existed) -- callers should treat 0
+  /// as "nothing happened," not an error.
+  ///
+  /// Live playtest repair pass 2026-09-20: the reward is one hour's worth
+  /// of the player's OWN current fleet earning rate -- [Balance.
+  /// fleetCoinsPerHour], the exact same canonical formula offline income
+  /// already uses (see VoyageStore.load/CommandScreen's background-resume
+  /// path) -- computed fresh at claim time, not a stale flat constant. A
+  /// stronger fleet is rewarded more, matching what "an hour of your own
+  /// earnings" actually means.
   int claimMoneyShip(String id) {
     final match = ships.where((s) => s.id == id && s.isMoneyShip);
     if (match.isEmpty) return 0;
     ships.remove(match.first);
-    coins += Balance.moneyShipReward;
+    final reward = Balance.fleetCoinsPerHour(ships).round();
+    coins += reward;
     _moneyShipAliveSeconds = 0;
-    _moneyShipCooldownRemaining = Balance.moneyShipCooldownSimSeconds;
+    _moneyShipCooldownRemaining = _rolledMoneyShipCooldown();
     revision++;
-    return Balance.moneyShipReward;
+    return reward;
   }
   String? purchaseSlot() {
     final n = progress.commands.length;

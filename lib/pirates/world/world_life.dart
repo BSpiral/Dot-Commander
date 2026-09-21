@@ -435,7 +435,13 @@ class WorldLife {
       );
       w.remaining = LifeBalance.serviceSeconds(w.bought.toDouble(), speed);
     } else {
-      s.cargo = min(hullFor(s.hullType).holds, s.cargo + w.bought);
+      // Live playtest repair pass 2026-09-20: this used to re-clamp to
+      // the RAW hull base (hullFor(s.hullType).holds) even though `free`
+      // just above already correctly sized w.bought against the ship's
+      // real effective capacity (Ship Hold Fleet Tree + equipment) --
+      // silently discarding any cargo bought past the hull's own base,
+      // making legitimate Hull cargo upgrades meaningless in practice.
+      s.cargo = min(v.progress.effectiveHoldCapacity(s), s.cargo + w.bought);
       w.phase = 4;
       s.fleeing = false;
       s.threatId = null;

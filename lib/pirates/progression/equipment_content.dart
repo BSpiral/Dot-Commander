@@ -74,6 +74,20 @@ const equipmentContent = [
     '15% less Crew damage.',
     {'crewDefense': .15},
   ),
+  // Live playtest repair pass 2026-09-20 (item 5): the first real
+  // consumer of the 'hold' effect key (see FleetProgress.apply) -- a
+  // genuine Hull Upgrade cargo/hold capacity bonus, reinforcement-slot
+  // like Reinforced Keel/Boarding Netting above. +15% is a reasonable
+  // default in line with this game's other single-item percentage
+  // bonuses (speed/economy/crewDefense items range roughly 3%-15%), not
+  // a value specified by the repair brief itself.
+  EquipmentDefinition(
+    'cargo_hold',
+    'Cargo Hold Extension',
+    ItemKind.reinforcement,
+    '+15% cargo/hold capacity.',
+    {'hold': .15},
+  ),
   // Rigging: mobility/structure equipment.
   EquipmentDefinition(
     'sweeps',

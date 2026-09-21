@@ -28,8 +28,7 @@ abstract final class MonetizationIds {
   // allowance in MonetizationStore (see RewardedChestService), keyed by
   // category, never by ad unit -- sharing an ad unit cannot combine or
   // inflate a daily limit.
-  static const _shipCommonRewardedId =
-      'ca-app-pub-7136986047774590/4201486884';
+  static const _hullRewardedId = 'ca-app-pub-7136986047774590/4201486884';
   static const _crewEquipmentRewardedId =
       'ca-app-pub-7136986047774590/7543422364';
   static const _officersCommonRewardedId =
@@ -43,7 +42,7 @@ abstract final class MonetizationIds {
   static String rewardedAdUnitIdFor(RewardedAdGroup group) {
     if (kDebugMode) return testRewardedAdUnitId;
     return switch (group) {
-      RewardedAdGroup.shipCommon => _shipCommonRewardedId,
+      RewardedAdGroup.hull => _hullRewardedId,
       RewardedAdGroup.crewEquipment => _crewEquipmentRewardedId,
       RewardedAdGroup.officersCommon => _officersCommonRewardedId,
     };
@@ -77,7 +76,9 @@ abstract final class MonetizationIds {
 
 /// Which of Dot Commander's three real rewarded ad units backs a Common
 /// Chest category's rewarded-ad opening route. Named after the AdMob
-/// console labels for those units.
+/// console labels for those units, and matching the game's three real
+/// upgrade families (Hull Upgrade / Crew Equipment / Officer -- see
+/// UpgradeCategory in fleet_progress.dart) exactly.
 ///
 /// Playability pass 2026-09-18: this is also the player-facing unit for
 /// Common Chest AD REWARDS -- there are exactly 3 "watch an ad to open a
@@ -98,13 +99,24 @@ abstract final class MonetizationIds {
 /// paid chest grid, which already offers all 5 categories individually);
 /// adding a dedicated ad route for either would need a real new AdMob ad
 /// unit, which doesn't exist.
-enum RewardedAdGroup { shipCommon, crewEquipment, officersCommon }
+///
+/// Live playtest repair pass 2026-09-20 (second pass, same day): [hull]
+/// was named/labeled [shipCommon]/'Ship' and its ChestCategory.hull only
+/// ever produced a brand-new ship hull -- a real "ship dispenser" bug, not
+/// what "watch an ad to open a Hull Chest" should mean. ChestCategory.hull
+/// itself now spans the FULL Hull Upgrade family (the ship's hull PLUS
+/// cannon/rigging/reinforcement/figurehead -- see UpgradeCategory.hull's
+/// own slots, which this now matches exactly), so this group (renamed to
+/// [hull]) is unchanged here (still exactly one category) but genuinely
+/// delivers "Hull upgrades," of which a hull swap is only one possible
+/// outcome among several, not the only one.
+enum RewardedAdGroup { hull, crewEquipment, officersCommon }
 
 extension RewardedAdGroupLabel on RewardedAdGroup {
   String get label => switch (this) {
-    RewardedAdGroup.shipCommon => 'Ship',
+    RewardedAdGroup.hull => 'Hull',
     RewardedAdGroup.crewEquipment => 'Crew Equipment',
-    RewardedAdGroup.officersCommon => 'Officers',
+    RewardedAdGroup.officersCommon => 'Officer',
   };
 
   /// The single ChestCategory this ad group grants access to. Kept
@@ -113,7 +125,7 @@ extension RewardedAdGroupLabel on RewardedAdGroup {
   /// CommandScreen._grantRewardedChest) need no changes now that every
   /// group maps to exactly one category.
   List<ChestCategory> get chestCategories => switch (this) {
-    RewardedAdGroup.shipCommon => const [ChestCategory.hull],
+    RewardedAdGroup.hull => const [ChestCategory.hull],
     RewardedAdGroup.crewEquipment => const [ChestCategory.crew],
     RewardedAdGroup.officersCommon => const [ChestCategory.officers],
   };

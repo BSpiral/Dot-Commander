@@ -320,7 +320,17 @@ void main() {
   });
 
   group('Existing saves migrate safely', () {
-    test('the legacy \'cargo\' -> CommandTrack.portRelations save-format mapping still works with all the corrected formulas', () async {
+    // Live playtest repair pass 2026-09-20 (item 4, dead Cargo tree
+    // cleanup): the legacy 'cargo' -> CommandTrack.portRelations mapping
+    // was an orphaned reference that existed solely for a per-ship
+    // CommandTrack this game no longer has -- removed outright, per this
+    // project's standing "no old-save migration required during testing"
+    // policy (see incompatible_save_recovery_test.dart in the Dot
+    // Commander save-recovery pass). A save carrying that old key must
+    // now fail to load cleanly (triggering the Start New Voyage recovery
+    // path), not silently and incorrectly reinterpret it as something
+    // else.
+    test('a save carrying the old, now-removed \'cargo\' per-ship tree key fails to load instead of silently migrating', () async {
       String? data;
       final store = VoyageStore(read: () async => data, write: (s) async => data = s);
       final v = createCaribbean();
@@ -329,15 +339,7 @@ void main() {
       final commandRow = (root['progression']['commands'] as List).first as Map<String, dynamic>;
       (commandRow['tree'] as Map<String, dynamic>)['cargo'] = 400;
       data = jsonEncode(root);
-      final loaded = await store.load();
-      final loadedShip = loaded.ships.firstWhere((s) => s.playerOwned);
-      final loadedCommand = loaded.progress.commands[loadedShip.id]!;
-      expect(loadedCommand.level(CommandTrack.portRelations), 400);
-      expect(loadedCommand.portCargoSupply, greaterThan(10));
-      expect(
-        loadedShip.cargo,
-        lessThanOrEqualTo(loaded.progress.effectiveHoldCapacity(loadedShip)),
-      );
+      await expectLater(store.load(), throwsFormatException);
     });
 
     test('a high crewDefense (equipment-boosted past the old .35 bound) round-trips through a saved in-progress encounter without being rejected as corrupted', () {

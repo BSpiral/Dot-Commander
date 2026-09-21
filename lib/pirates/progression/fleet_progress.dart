@@ -85,8 +85,19 @@ enum ChestKind { common, rare }
 enum ChestCategory { hull, equipment, crew, cannon, officers }
 
 extension ChestCategoryContent on ChestCategory {
+  /// Live playtest repair pass 2026-09-20: [hull] used to accept ONLY
+  /// ItemKind.hull (a brand-new ship), making a "Hull Chest" a pure ship
+  /// dispenser -- never a cannon/rigging/reinforcement/figurehead, even
+  /// though those are just as much a Hull Upgrade (see UpgradeCategory.
+  /// hull's own slots, which [hullSlots] mirrors exactly). Widened to the
+  /// full family so "Hull Chest -> Hull upgrades only" is actually true
+  /// of everything it can award, not just its narrowest member.
+  /// ChestCategory.equipment and ChestCategory.cannon are UNCHANGED and
+  /// still independently reachable (narrower gem-purchase-only slices of
+  /// this same wider family) -- see roll()'s own doc comment for how the
+  /// overlap is handled.
   bool accepts(ItemKind kind) => switch (this) {
-    ChestCategory.hull => kind == ItemKind.hull,
+    ChestCategory.hull => hullSlots.contains(kind),
     // Rigging/Reinforcement/Figurehead are new sub-slots of what used to
     // be the single 'equipment' ItemKind; they all still come from the
     // same "Equipment" paid/ad chest category as before, so the Shop's
@@ -101,12 +112,17 @@ extension ChestCategoryContent on ChestCategory {
     ChestCategory.crew => crewSlots.contains(kind),
     ChestCategory.officers => officerSlots.contains(kind),
   };
+  // Live playtest repair pass 2026-09-20: crew/officers relabeled to
+  // match the game's three standardized upgrade family names (Hull
+  // Upgrade / Crew Equipment / Officer -- see UpgradeCategory) exactly,
+  // so a gem-purchased "Crew Equipment Chest"/"Officer Chest" and the
+  // identically-named rewarded-ad chest always describe the same thing.
   String get label => switch (this) {
     ChestCategory.hull => 'Hull',
     ChestCategory.equipment => 'Equipment',
-    ChestCategory.crew => 'Crew',
+    ChestCategory.crew => 'Crew Equipment',
     ChestCategory.cannon => 'Ordnance',
-    ChestCategory.officers => 'Officers',
+    ChestCategory.officers => 'Officer',
   };
 }
 
@@ -309,21 +325,29 @@ abstract final class Balance {
     return (fleetCoinsPerHour / 60 * minutes).floor();
   }
 
-  /// The money ship's flat claim reward -- "roughly one neutral
-  /// ship-hour" per the 2026-09-20 economy audit, deliberately NOT scaled
-  /// by the player's own fleet (unlike offline income): it's a fixed,
-  /// predictable bonus rather than a reduced or inflated echo of
-  /// whatever the player already has.
-  static const moneyShipReward = 540;
-  // Pacing (see PiratesVoyage's money-ship spawn/despawn): a flat 15
-  // minutes comfortably clears "at least 10 minutes" while landing at
-  // "a few" (~4) opportunities per hour once despawn/claim time is
-  // included; despawning an unclaimed ship after 90 sim-seconds keeps
-  // one from lingering on the map indefinitely.
-  static const moneyShipCooldownSimSeconds = 900.0,
-      moneyShipDespawnSimSeconds = 90.0,
-      moneyShipSpawnCheckIntervalSimSeconds = 30.0,
-      moneyShipSpawnChance = .12;
+  // Live playtest repair pass 2026-09-20: the flat 540 reward is GONE --
+  // the old design brief's own "roughly one neutral ship-hour" intent is
+  // now computed for real, at claim time, from [fleetCoinsPerHour] (the
+  // exact same canonical earning formula offline income already uses),
+  // reusing the player's ACTUAL current fleet rather than a fixed
+  // stand-in number -- see PiratesVoyage.claimMoneyShip.
+  //
+  // Pacing also repaired: the OLD scheme (a flat 900s/15min cooldown,
+  // THEN an independent 30s-interval/12%-chance re-roll to actually
+  // spawn) averaged roughly 19 real minutes per cycle end to end --
+  // observably under the intended "roughly one every 10 minutes,
+  // approximately 6/hour" target (confirmed live: a normal play session
+  // could easily see zero). Replaced with a single deterministic
+  // cooldown plus a small random jitter -- no separate chance-to-spawn
+  // gate at all -- so a money ship appears reliably close to every 10
+  // minutes (9-11 min range) rather than following a bursty/droughty
+  // random-retry distribution with the same long-run average. Despawning
+  // an unclaimed ship after 90 sim-seconds (unchanged) still keeps one
+  // from lingering on the map indefinitely; the player still has to
+  // notice and reach it before then.
+  static const moneyShipCooldownSimSeconds = 540.0,
+      moneyShipCooldownJitterSimSeconds = 120.0,
+      moneyShipDespawnSimSeconds = 90.0;
 
   /// Port Relations balance pass 2026-09-20: how a ship's hull base
   /// hold, its share of the fleet-wide Ship Hold tree (0-50, see
@@ -766,9 +790,10 @@ class FleetProgress {
           case 'volley':
             s.openingVolley += n;
           case 'hold':
-            // Port Relations balance pass 2026-09-20: no equipment uses
-            // this key yet, but the field/formula exist so a future
-            // cargo/hold item works without further plumbing -- see
+            // Live playtest repair pass 2026-09-20: first real consumer
+            // is the Reinforcement-slot Cargo Hold Extension (see
+            // equipment_content.dart) -- a genuine Hull Upgrade cargo
+            // bonus, per item 5 of the repair brief. See
             // effectiveHoldCapacity's own doc comment for how this
             // combines with the Fleet Tree's flat +50.
             s.holdBonus += n;
@@ -853,6 +878,14 @@ class FleetProgress {
     return weights.keys.last;
   }
 
+  /// Live playtest repair pass 2026-09-20: ChestCategory.hull's pool now
+  /// spans the whole Hull Upgrade family (see ChestCategoryContent.accepts)
+  /// -- a genuine ship-hull swap (no equipmentContent entry; drawn from
+  /// hullCatalog, same as before) is treated as one more roll OPTION
+  /// alongside every cannon/rigging/reinforcement/figurehead definition in
+  /// the pool, each equally likely, rather than the only possible outcome.
+  /// Every other category is completely unchanged: [pool] alone decides
+  /// the roll, exactly as before this pass.
   EquipmentItem roll(
     ChestKind chest,
     Random rng, {
@@ -862,9 +895,10 @@ class FleetProgress {
     final pool = equipmentContent
         .where((d) => category.accepts(d.kind))
         .toList();
-    final definition = category == ChestCategory.hull
-        ? null
-        : pool[rng.nextInt(pool.length)];
+    final includesHullSwap = category == ChestCategory.hull;
+    final options = pool.length + (includesHullSwap ? 1 : 0);
+    final pick = rng.nextInt(options);
+    final definition = includesHullSwap && pick == pool.length ? null : pool[pick];
     final kind = definition?.kind ?? ItemKind.hull;
     final h = hullCatalog[rng.nextInt(hullCatalog.length)];
     final rarity = _rollRarity(source, rng);
@@ -1049,7 +1083,6 @@ class FleetProgress {
       for (final e in (row['tree'] as Map<String, dynamic>).entries) {
         final track = switch (e.key) {
           'speed' || 'handling' || 'exploration' => CommandTrack.navigation,
-          'cargo' => CommandTrack.portRelations,
           _ => CommandTrack.values.byName(e.key),
         };
         c.tree[track] = ((c.tree[track] ?? 0) + level(e.value)).clamp(

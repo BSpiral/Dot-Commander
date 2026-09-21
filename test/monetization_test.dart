@@ -186,7 +186,7 @@ void main() {
         final store = MonetizationStore(now: () => DateTime.utc(2026, 1, 1));
         const cap = 1;
         expect(
-          await store.recordRewardedOpen('chest_group_shipCommon', cap),
+          await store.recordRewardedOpen('chest_group_hull', cap),
           isTrue,
         );
         final service = RewardedChestService.singleSource(
@@ -195,7 +195,7 @@ void main() {
           dailyCap: cap,
         );
         expect(
-          await service.watch(RewardedAdGroup.shipCommon),
+          await service.watch(RewardedAdGroup.hull),
           RewardedChestOutcome.capReached,
         );
       },
@@ -207,7 +207,7 @@ void main() {
         store: MonetizationStore(now: () => DateTime.utc(2026, 1, 1)),
       );
       expect(
-        await service.watch(RewardedAdGroup.shipCommon),
+        await service.watch(RewardedAdGroup.hull),
         RewardedChestOutcome.notAvailable,
       );
     });
@@ -222,13 +222,13 @@ void main() {
         );
         for (var i = 0; i < Balance.rewardedChestDailyCap; i++) {
           expect(
-            await store.recordRewardedOpen('chest_group_shipCommon', 5),
+            await store.recordRewardedOpen('chest_group_hull', 5),
             isTrue,
           );
         }
-        expect(await service.remainingToday(RewardedAdGroup.shipCommon), 0);
+        expect(await service.remainingToday(RewardedAdGroup.hull), 0);
         expect(
-          await service.watch(RewardedAdGroup.shipCommon),
+          await service.watch(RewardedAdGroup.hull),
           RewardedChestOutcome.capReached,
         );
         // A completely separate group is still untouched.
@@ -313,10 +313,10 @@ void main() {
           store: store,
         );
         expect(
-          await service.watch(RewardedAdGroup.shipCommon),
+          await service.watch(RewardedAdGroup.hull),
           RewardedChestOutcome.granted,
         );
-        expect(await service.remainingToday(RewardedAdGroup.shipCommon), 4);
+        expect(await service.remainingToday(RewardedAdGroup.hull), 4);
         expect(ads.showCalls, 1);
       },
     );
@@ -333,10 +333,10 @@ void main() {
           store: store,
         );
         expect(
-          await service.watch(RewardedAdGroup.shipCommon),
+          await service.watch(RewardedAdGroup.hull),
           RewardedChestOutcome.dismissedWithoutReward,
         );
-        expect(await service.remainingToday(RewardedAdGroup.shipCommon), 5);
+        expect(await service.remainingToday(RewardedAdGroup.hull), 5);
       },
     );
 
@@ -348,10 +348,10 @@ void main() {
         store: store,
       );
       expect(
-        await service.watch(RewardedAdGroup.shipCommon),
+        await service.watch(RewardedAdGroup.hull),
         RewardedChestOutcome.busy,
       );
-      expect(await service.remainingToday(RewardedAdGroup.shipCommon), 5);
+      expect(await service.remainingToday(RewardedAdGroup.hull), 5);
     });
 
     test(
@@ -365,14 +365,14 @@ void main() {
         );
         for (var i = 0; i < 5; i++) {
           expect(
-            await service.watch(RewardedAdGroup.shipCommon),
+            await service.watch(RewardedAdGroup.hull),
             RewardedChestOutcome.granted,
           );
         }
         // The 6th watch must not even ask the ad source to show -- the
         // pre-check short-circuits once the group is capped.
         expect(
-          await service.watch(RewardedAdGroup.shipCommon),
+          await service.watch(RewardedAdGroup.hull),
           RewardedChestOutcome.capReached,
         );
         expect(ads.showCalls, 5);
@@ -396,7 +396,7 @@ void main() {
         final store = MonetizationStore(now: () => DateTime.utc(2026, 1, 1));
         final service = RewardedChestService(
           adsByGroup: {
-            RewardedAdGroup.shipCommon: hullAds,
+            RewardedAdGroup.hull: hullAds,
             RewardedAdGroup.crewEquipment: crewAds,
             RewardedAdGroup.officersCommon: _FakeRewardedAdSource(
               RewardedShowResult.earned,
@@ -405,10 +405,10 @@ void main() {
           store: store,
         );
         expect(
-          await service.watch(RewardedAdGroup.shipCommon),
+          await service.watch(RewardedAdGroup.hull),
           RewardedChestOutcome.granted,
         );
-        expect(await service.remainingToday(RewardedAdGroup.shipCommon), 4);
+        expect(await service.remainingToday(RewardedAdGroup.hull), 4);
         // A different group, never watched, is untouched.
         expect(
           await service.remainingToday(RewardedAdGroup.crewEquipment),
@@ -421,22 +421,37 @@ void main() {
   });
 
   group('PiratesVoyage money ship (Saturday repair pass: replaces the old rewarded-ad Gold button)', () {
-    test('spawns eventually (given enough ticks), is a real non-player Vessel, and is tappable for the flat reward', () {
-      final v = createCaribbean(encountersEnabled: true);
-      final before = v.coins;
-      String? moneyShipId;
-      for (var i = 0; i < 20000 && moneyShipId == null; i++) {
-        v.update(1.0);
-        final found = v.ships.where((s) => s.isMoneyShip);
-        if (found.isNotEmpty) moneyShipId = found.first.id;
-      }
-      expect(moneyShipId, isNotNull, reason: 'never spawned across a long simulated run');
-      expect(v.ships.firstWhere((s) => s.id == moneyShipId).playerOwned, isFalse);
-      final reward = v.claimMoneyShip(moneyShipId!);
-      expect(reward, Balance.moneyShipReward);
-      expect(v.coins, before + reward);
-      expect(v.ships.any((s) => s.isMoneyShip), isFalse, reason: 'claiming removes it from the map');
-    });
+    test(
+      'spawns eventually (given enough ticks), is a real non-player Vessel, and is tappable for the real hour-of-earnings reward (not a stale flat constant)',
+      () {
+        final v = createCaribbean(encountersEnabled: true);
+        final before = v.coins;
+        String? moneyShipId;
+        for (var i = 0; i < 20000 && moneyShipId == null; i++) {
+          v.update(1.0);
+          final found = v.ships.where((s) => s.isMoneyShip);
+          if (found.isNotEmpty) moneyShipId = found.first.id;
+        }
+        expect(moneyShipId, isNotNull, reason: 'never spawned across a long simulated run');
+        expect(v.ships.firstWhere((s) => s.id == moneyShipId).playerOwned, isFalse);
+        final expectedReward = Balance.fleetCoinsPerHour(v.ships).round();
+        // Captured immediately before the claim, not `before` (pre-loop) --
+        // the spawn-search loop above runs real simulated gameplay (trade,
+        // ports) that can itself earn coins independently of the money
+        // ship, so isolating the claim's own effect needs the coin total
+        // right before it, not the voyage's very first value.
+        final coinsBeforeClaim = v.coins;
+        final reward = v.claimMoneyShip(moneyShipId!);
+        expect(
+          reward,
+          expectedReward,
+          reason: 'must reuse the exact canonical fleetCoinsPerHour formula, not a duplicate/stale calculation',
+        );
+        expect(v.coins, coinsBeforeClaim + reward);
+        expect(v.coins, greaterThanOrEqualTo(before + reward));
+        expect(v.ships.any((s) => s.isMoneyShip), isFalse, reason: 'claiming removes it from the map');
+      },
+    );
 
     test('claiming a non-existent/already-claimed money ship grants nothing (never double-pays)', () {
       final v = createCaribbean();

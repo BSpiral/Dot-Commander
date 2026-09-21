@@ -152,6 +152,7 @@ class _UpgradesPanelState extends State<UpgradesPanel> {
     'minimum': 'Min Speed Floor',
     'opening': 'Opening Attack',
     'volley': 'Opening Volley',
+    'hold': 'Cargo Capacity',
   };
 
   Widget _categoryView(
