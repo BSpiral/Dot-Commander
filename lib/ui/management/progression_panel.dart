@@ -69,7 +69,18 @@ class ProgressionPanel extends StatelessWidget {
           key: const Key('buy_slot'),
         ),
       );
+      // Shop cleanup pass 2026-09-22: ChestCategory.equipment (the plain
+      // "Common/Rare Equipment Chest" gem purchase) is deliberately
+      // skipped here -- redundant with the wider ChestCategory.hull
+      // family, which already independently covers the same
+      // rigging/reinforcement/figurehead pool (see
+      // ChestCategoryContent.accepts's own doc comment). This removes
+      // only the Shop's two gem-purchase ROWS; the enum value, openChest,
+      // and equipment already owned/dropped elsewhere are all untouched
+      // -- ChestCategory.crew ("Crew Equipment") and ChestCategory.hull/
+      // officers keep their own rows exactly as before.
       for (final category in ChestCategory.values) {
+        if (category == ChestCategory.equipment) continue;
         for (final kind in ChestKind.values) {
           widgets.add(
             row(

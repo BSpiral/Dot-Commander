@@ -6,7 +6,7 @@ import 'package:dot_commander/ui/management/progression_panel.dart';
 
 void main() {
   testWidgets(
-    'Shop exposes eight explicit category choices and shows a reward',
+    'Shop exposes six explicit category choices and shows a reward',
     (t) async {
       final v = createCaribbean()..gems = 100;
       await t.pumpWidget(
@@ -23,9 +23,19 @@ void main() {
           ),
         ),
       );
+      // Shop cleanup pass 2026-09-22: ChestCategory.equipment's two rows
+      // (the plain "Common/Rare Equipment Chest" gem purchases) were
+      // removed as redundant with ChestCategory.hull's own wider family
+      // -- see progression_panel.dart's own doc comment. The remaining
+      // three categories (hull, crew, officers) still get a row each.
       for (final c in ChestCategory.values) {
         for (final r in ChestKind.values) {
-          expect(find.byKey(Key('chest_${c.name}_${r.name}')), findsOneWidget);
+          final finder = find.byKey(Key('chest_${c.name}_${r.name}'));
+          if (c == ChestCategory.equipment) {
+            expect(finder, findsNothing);
+          } else {
+            expect(finder, findsOneWidget);
+          }
         }
       }
       // Ship/combat overhaul pass 2026-09-21: ChestCategory.cannon
