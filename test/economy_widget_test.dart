@@ -28,14 +28,23 @@ void main() {
           expect(find.byKey(Key('chest_${c.name}_${r.name}')), findsOneWidget);
         }
       }
-      final button = find.byKey(const Key('chest_cannon_rare'));
+      // Ship/combat overhaul pass 2026-09-21: ChestCategory.cannon
+      // ("Ordnance") is removed -- it was the only category whose pool
+      // was a single guaranteed ItemKind (cannon shot types), which is
+      // what let this test assert a specific resulting kind without
+      // seeding the roll. No remaining category offers that guarantee
+      // (every one now covers multiple ItemKinds), so this checks the
+      // general reward flow -- a tap grants SOME item from the tapped
+      // category's own pool, spends the right gems, and shows the
+      // reward -- instead of one specific kind.
+      final button = find.byKey(const Key('chest_officers_rare'));
       await t.ensureVisible(button);
       await t.pump();
       await t.tap(button);
       await t.pump();
-      expect(v.progress.inventory.single.kind, ItemKind.cannon);
+      expect(ChestCategory.officers.accepts(v.progress.inventory.single.kind), isTrue);
       expect(v.gems, 50);
-      expect(find.textContaining('Received Fine '), findsOneWidget);
+      expect(find.textContaining('Received '), findsOneWidget);
     },
   );
   testWidgets(

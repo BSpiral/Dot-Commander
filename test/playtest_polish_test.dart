@@ -56,9 +56,15 @@ void main() {
     c.tree[CommandTrack.hull] = 1100;
     expect(c.nextBenefit(CommandTrack.hull), 'Maximum level reached');
     c.tree[CommandTrack.firepower] = 100;
+    // Ship/combat overhaul pass 2026-09-21: firePerUnit raised .02 -> .1
+    // (live playtesting reported a barely-visible ~+0.01-ish per level;
+    // the intended increment is +0.1 per reward-unit -- see
+    // LifeBalance.firePerUnit's own doc comment), so the SAME
+    // unitsDelta (2, crossing from cycle 0 into cycle 1 at level 100)
+    // now reads 2 * .1 = 0.2, not 2 * .02 = 0.04.
     expect(
       c.nextBenefit(CommandTrack.firepower),
-      'Next level: +0.04 firepower',
+      'Next level: +0.2 firepower',
     );
   });
   test(

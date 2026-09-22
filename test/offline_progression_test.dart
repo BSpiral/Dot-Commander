@@ -59,18 +59,23 @@ void main() {
       expect(Balance.shipCoinsPerHour(ship), closeTo(Balance.neutralShipCoinsPerHour, 0.5));
     });
 
-    test('a fresh starting Sloop is meaningfully below the 1.0 reference (the "-40%" starting estimate)', () {
+    test('a fresh starting Sloop is meaningfully below the 1.0 reference', () {
       final v = createCaribbean();
       final ship = v.ships.firstWhere((s) => s.playerOwned);
       expect(ship.hullType, 'Sloop');
       final rate = Balance.shipCoinsPerHour(ship);
       // Grounded in real hull stats (speed x cargo hold vs the Galley
       // reference), not a guess -- see Balance.shipCoinsPerHour's doc
-      // comment for the full derivation. Lands close to (within the
-      // 2026-09-20 economy audit's own "approximately") the ~324/hour
-      // estimate.
-      expect(rate, greaterThan(280));
-      expect(rate, lessThan(360));
+      // comment for the full derivation. Ship/combat overhaul pass
+      // 2026-09-21: lands around ~203/hour now (was ~324/hour) -- the
+      // Galley REFERENCE itself gained a much bigger cargo hold in this
+      // pass (12 -> 22), which lowers every other hull's THROUGHPUT
+      // RELATIVE TO IT without changing that hull's own real speed/hold
+      // numbers. The important property this test actually checks --
+      // meaningfully below the 1.0/540 reference, not a specific
+      // constant -- still holds.
+      expect(rate, greaterThan(160));
+      expect(rate, lessThan(240));
     });
 
     test('economyBonus (portRelations Tree + equipped economy gear) scales a ship\'s rate multiplicatively', () {

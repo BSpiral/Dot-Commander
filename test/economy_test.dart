@@ -95,7 +95,11 @@ void main() {
           expect(a.id, isNot(b.id));
         }
       }
-      expect(choices, 10);
+      // Ship/combat overhaul pass 2026-09-21: ChestCategory.cannon
+      // ("Ordnance") removed -- 4 categories x 2 kinds = 8, matching this
+      // test's own title (which already said "eight" even when the
+      // actual count here was still 10).
+      expect(choices, 8);
     },
   );
   test(

@@ -133,6 +133,18 @@ PiratesVoyage createCaribbean({
     'Ona Finch',
     'Jonas Grey',
   ];
+  // Encounter/ship-selection balance pass 2026-09-21: index 14 (the
+  // third initial Privateer, see `modes` below) was hardcoded to
+  // 'Man-of-War' -- this FIXED starting roster is completely separate
+  // from WorldLife.spawn's own (now-rebalanced) weighting, so even after
+  // fixing the ambient/ongoing spawn weights, every NEW game still
+  // started with a Man-of-War in play from minute one, a real
+  // contributor to "Man-of-War feels like normal traffic" that the
+  // ambient-spawn fix alone never touched. Changed to 'Brig', matching
+  // the other two initial Privateers' now-common Frigate hull and the
+  // same "Frigate/Brig common, Man-of-War rare" balance WorldLife.spawn's
+  // own privateerHullWeights now enforces for every SUBSEQUENT privateer
+  // arrival.
   const hulls = [
     'Sloop',
     'Schooner',
@@ -148,7 +160,7 @@ PiratesVoyage createCaribbean({
     'Schooner',
     'Brig',
     'Galley',
-    'Man-of-War',
+    'Brig',
   ];
   const modes = [
     BehaviorMode.merchant,

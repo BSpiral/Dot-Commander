@@ -113,26 +113,33 @@ void main() {
     });
 
     test(
-      'audit: two other chest types still exist beyond the three standardized families '
-      '(Equipment = ship rigging/reinforcement/figurehead, Ordnance = cannon ammo types) -- '
-      'both remain independently purchasable in the Shop\'s gem grid, untouched by this pass, '
-      'and their pools are (now, by construction) subsets of the widened Hull family, not '
-      'unrelated leaked content',
+      'audit: one other chest type still exists beyond the three standardized families '
+      '(Equipment = ship rigging/reinforcement/figurehead) -- remains independently '
+      'purchasable in the Shop\'s gem grid, untouched by this pass, and its pool is '
+      '(by construction) a subset of the widened Hull family, not unrelated leaked content. '
+      'Ship/combat overhaul pass 2026-09-21: Ordnance (ChestCategory.cannon) is GONE -- it '
+      'was already fully redundant with Hull (see the same subset property below), never '
+      'reachable via any rewarded ad, and never persisted in save data, so removing it needed '
+      'no migration.',
       () {
-        expect(ChestCategory.values, containsAll([ChestCategory.equipment, ChestCategory.cannon]));
+        expect(ChestCategory.values, containsAll([ChestCategory.hull, ChestCategory.equipment, ChestCategory.crew, ChestCategory.officers]));
+        expect(ChestCategory.values.length, 4);
         expect(ChestCategory.equipment.label, 'Equipment');
-        expect(ChestCategory.cannon.label, 'Ordnance');
         for (final kind in ItemKind.values) {
-          if (ChestCategory.equipment.accepts(kind) || ChestCategory.cannon.accepts(kind)) {
+          if (ChestCategory.equipment.accepts(kind)) {
             expect(
               ChestCategory.hull.accepts(kind),
               isTrue,
-              reason: 'Equipment/Ordnance content must all fall within the wider Hull family now that Hull spans hullSlots',
+              reason: 'Equipment content must all fall within the wider Hull family now that Hull spans hullSlots',
             );
           }
         }
       },
     );
+
+    test('Ordnance is gone -- ChestCategory has no "cannon" member left to reference', () {
+      expect(ChestCategory.values.map((c) => c.name), isNot(contains('cannon')));
+    });
   });
 
   group('Item 4: the dead Cargo/Hold future-progression tree is gone', () {

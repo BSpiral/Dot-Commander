@@ -148,7 +148,14 @@ void main() {
       for (final s in v.ships.take(8)) {
         s.behavior = BehaviorMode.pirate;
       }
-      v.life.tick(.01);
+      // Ship/combat overhaul pass 2026-09-21 (pirate/hunter ecosystem
+      // damping): a second hunter recruitment now respects
+      // hunterSpawnCooldownSeconds (60s) instead of resolving instantly
+      // in the same tick -- the fix for a real overshoot/oscillation bug
+      // (see WorldLife.hunterSpawnCooldown's own doc comment). Advance
+      // just past the cooldown so the second recruitment can actually
+      // fire, rather than asserting the old, undamped instant behavior.
+      v.life.tick(LifeBalance.hunterSpawnCooldownSeconds + 1);
       expect(v.ships.where((s) => s.hunter && s.atSea).length, 2);
       for (final s in v.ships.where((s) => !s.hunter)) {
         s.behavior = BehaviorMode.merchant;

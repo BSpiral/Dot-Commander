@@ -154,10 +154,18 @@ class VoyageStore {
             );
       }
     }
-    // Effective capacity (hull base + Fleet Tree + equipment, see
-    // FleetProgress.effectiveHoldCapacity) rather than raw hull.holds --
-    // progress.restore already ran above, so any FleetTrack.shipHold
-    // investment is already reflected here.
+    // Effective capacity (hull base + equipment, see FleetProgress.
+    // effectiveHoldCapacity) rather than raw hull.holds. Ship/combat
+    // overhaul clarification pass 2026-09-21: the fleet-wide Ship Hold
+    // tree term this comment used to mention is retired (see
+    // FleetTrack's own doc comment) -- effectiveHoldCapacity no longer
+    // has any fleet-wide component at all. A player-owned ship whose
+    // persisted cargo only fit because of that now-removed bonus is
+    // safely handled: progress.apply (called below, for every
+    // player-owned ship) already clamps s.cargo down to whatever the
+    // ship's real capacity is via its own `s.cargo = min(s.cargo,
+    // effectiveHoldCapacity(s))` line, before the hard validation at the
+    // bottom of this block ever runs.
     if (version < 7) {
       for (final s in loaded.ships) {
         s.cargo = s.cargo.clamp(0, loaded.progress.effectiveHoldCapacity(s));

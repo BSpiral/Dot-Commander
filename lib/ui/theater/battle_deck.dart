@@ -31,29 +31,7 @@ class _BattleDeckState extends State<BattleDeck>
   late EncounterResult result;
   double last = 0;
   void prepare() {
-    final r = widget.run.result;
-    result = !r.a.owned && r.b.owned
-        ? EncounterResult(
-            id: r.id,
-            a: r.b,
-            b: r.a,
-            kind: r.kind,
-            winnerId: r.winnerId,
-            escapedId: r.escapedId,
-            damageA: r.damageB,
-            damageB: r.damageA,
-            crewLossA: r.crewLossB,
-            crewLossB: r.crewLossA,
-            coins: r.coins,
-            gems: r.gems,
-            chainA: r.chainB,
-            chainB: r.chainA,
-            burnedA: r.burnedB,
-            burnedB: r.burnedA,
-            loot: r.loot,
-            effectsVersion: r.effectsVersion,
-          )
-        : r;
+    result = widget.run.result.playerFirst();
     script = scriptForResult(result);
     last = widget.run.elapsed;
   }

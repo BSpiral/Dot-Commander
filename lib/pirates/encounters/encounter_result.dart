@@ -150,6 +150,36 @@ class EncounterResult {
           hullFor(b.hullType).plankCapacity,
         )
       : 0;
+  /// Ship/combat overhaul pass 2026-09-21: [a]/[b] reflect whichever
+  /// order the encounter was actually detected in (either side could be
+  /// the player); several UI call sites (BattleDeck, ManagementPanel's
+  /// live Hull/Crew bars) need "the player's own combatant, whichever
+  /// slot it's in" without duplicating the same swap in more than one
+  /// place. Only swaps a/b (and their matching damage/loss/chain/burn
+  /// pairs) -- winnerId/escapedId (ship IDs, not slot-relative) and every
+  /// other field are untouched.
+  EncounterResult playerFirst() => !a.owned && b.owned
+      ? EncounterResult(
+          id: id,
+          a: b,
+          b: a,
+          kind: kind,
+          winnerId: winnerId,
+          escapedId: escapedId,
+          damageA: damageB,
+          damageB: damageA,
+          crewLossA: crewLossB,
+          crewLossB: crewLossA,
+          coins: coins,
+          gems: gems,
+          chainA: chainB,
+          chainB: chainA,
+          burnedA: burnedB,
+          burnedB: burnedA,
+          loot: loot,
+          effectsVersion: effectsVersion,
+        )
+      : this;
   double get duration => switch (kind) {
     EncounterKind.escape => 14,
     EncounterKind.cannon => 18,

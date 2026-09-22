@@ -80,7 +80,7 @@ void main() {
     },
   );
   test(
-    'noncombat purchases never change initial CP and crew upgrades never add sailors',
+    'noncombat purchases never change initial CP; crew upgrades now genuinely add sailors, capped at the hull\'s own ceiling',
     () {
       final v = createCaribbean()..coins = 1000000000;
       final s = v.ships.first;
@@ -92,10 +92,23 @@ void main() {
       }
       expect(v.progress.combatPower(s), cp);
       final crew = s.crewCount;
+      // Ship/combat overhaul pass 2026-09-21: crew COUNT now genuinely
+      // grows with CommandTrack.crew investment (capped per-hull at
+      // HullDefinition.crewCeiling -- see FleetProgress.apply's own doc
+      // comment) -- this is the direct fix for "the Sloop in particular
+      // should have unusually good long-term customization potential."
+      // combatPower is UNCHANGED as an assertion target above (that
+      // block only buys portRelations/offline, neither of which touch
+      // crew), so this is a genuinely separate, additive effect: a real
+      // crew increase DOES raise combatPower (crewCount is one of its
+      // terms) -- checked below, not asserted away.
       for (var i = 0; i < 1000; i++) {
         v.buyTree(s.id, CommandTrack.crew);
       }
-      expect(s.crewCount, crew);
+      expect(s.crewCount, greaterThan(crew));
+      expect(s.crewCount, v.progress.crewCapacity(s));
+      expect(s.crewCount, lessThanOrEqualTo(70)); // this ship's own crewCeiling (Sloop)
+      expect(v.progress.combatPower(s), greaterThan(cp));
       // Correction, Port Relations balance pass 2026-09-20: Crew
       // Effectiveness has no mechanical ceiling (a plain multiplier, see
       // FleetProgress.apply's own comment) -- 1000 levels genuinely

@@ -88,6 +88,21 @@ class Vessel {
   int cargo = 0;
   bool recovering = false;
   int crewCount;
+  // Ship/combat overhaul pass 2026-09-21: real, persisted crew CAPACITY
+  // (distinct from crewCount, the current headcount) -- mirrors
+  // maxHullHp's own role for hull HP exactly, and for the same reason:
+  // FleetProgress.apply needs to read the ship's crew capacity AS IT WAS
+  // BEFORE this specific Command Tree purchase to correctly preserve
+  // war-damage percentage while still letting the capacity itself grow.
+  // Recomputing "the old capacity" from the CURRENT tree level inside
+  // apply() cannot work -- PiratesVoyage.buyTree already bumps the tree
+  // level BEFORE calling apply(), so by the time apply() runs, "before"
+  // and "after" would read the exact same (already-bumped) tree value,
+  // making the fraction-preservation math cancel out to a no-op and
+  // crew count would never actually grow through real gameplay. A
+  // stored field, updated by apply() and left untouched in between (the
+  // same pattern maxHullHp already uses), is the fix.
+  int maxCrew;
   Point2 position;
   Destination? destination;
   BehaviorMode behavior;
@@ -107,7 +122,8 @@ class Vessel {
     this.playerOwned = false,
     this.load = LoadState.normal,
     this.riggingBonus = 0,
-  }) : hullHp = maxHullHp {
+  }) : hullHp = maxHullHp,
+       maxCrew = crewCount {
     if (!playerOwned) {
       final seed = id.codeUnits.fold(17, (a, b) => (a * 31 + b) & 0x7fffffff);
       npcTolerance = .1 + (seed % 41) / 100;

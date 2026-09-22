@@ -15,6 +15,33 @@ class DeckGeometry {
         width: stage.width * widthFraction,
         height: stage.width * widthFraction / aspect,
       );
+
+  /// Boarding presentation pass 2026-09-21: deterministic occupancy-aware
+  /// lane assignment for crossing dot [i] out of up to [planks]
+  /// simultaneous lanes -- round-robins across every lane and staggers
+  /// each dot's crossing start by its position in that lane's own queue,
+  /// so a congested lane visibly sends dots across one at a time instead
+  /// of several dots stacking on the identical path at the identical
+  /// instant. A top-level pure function (not a TheaterPainter method)
+  /// specifically so it's directly unit-testable -- see
+  /// test/ship_combat_overhaul_test.dart.
+  ///
+  /// [i] is a DOT index, not a crossing-order index -- only ODD dot
+  /// indices actually cross (see DeckTheater's own boarding-party rule:
+  /// half the crew crosses, half holds the home deck). Reindexing by
+  /// `(i - 1) ~/ 2` before taking the lane modulus is required, not
+  /// cosmetic: `i % planks` alone, applied directly to odd `i`, only
+  /// ever lands on ODD-numbered lanes whenever [planks] is even (every
+  /// odd number mod an even number is itself odd) -- e.g. every 2-plank
+  /// hull matchup (Brig, Frigate, Cog, Fluyt, Knarr, Corbita...) would
+  /// permanently leave lane 0 completely unused, exactly the "occupancy
+  /// -aware" property this function exists to guarantee.
+  static ({int index, double queueDelay}) laneAssignment(int i, int planks) {
+    final crossingOrder = (i - 1) ~/ 2;
+    final lane = crossingOrder % planks;
+    final queuePosition = crossingOrder ~/ planks;
+    return (index: lane, queueDelay: (queuePosition % 4) * .05);
+  }
 }
 
 class DeckTheater extends StatelessWidget {
@@ -73,6 +100,31 @@ class TheaterPainter extends CustomPainter {
   );
   @override
   void paint(Canvas canvas, Size size) {
+    // Boarding presentation pass 2026-09-21: a visible water backdrop so
+    // "outside the deck" reads as impassable water rather than empty
+    // background -- the same topology _crew's movement rules already
+    // enforce (dots never actually render outside a deck rect or the
+    // plank bridge between them), now visually legible too. A few faint
+    // animated ripple lines, not a new rendering subsystem.
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()..color = const Color(0xff0d3440),
+    );
+    for (var i = 0; i < 4; i++) {
+      final y = size.height * (.15 + i * .23);
+      final phase = seconds * .4 + i * 1.7;
+      final path = Path()..moveTo(0, y);
+      for (double x = 0; x <= size.width; x += size.width / 12) {
+        path.lineTo(x, y + math.sin(x / size.width * 6 + phase) * 2.5);
+      }
+      canvas.drawPath(
+        path,
+        Paint()
+          ..color = const Color(0xff1c5568).withValues(alpha: .55)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1,
+      );
+    }
     final sample = script?.sample(seconds);
     final a = _deck(size, sample?.player ?? const DeckPose(.5, .5));
     final da = sample?.playerDamage ?? TheaterDamage(hull: damage.clamp(0, 1));
@@ -93,13 +145,53 @@ class TheaterPainter extends CustomPainter {
         : _deck(size, sample.opponent, scale: opponentScale);
     if (b != null && sample != null) {
       for (final x in DeckGeometry.stations(sample.planks)) {
+        final from = Offset(a.center.dx + x * a.width, a.bottom);
+        final to = Offset(b.center.dx + x * b.width, b.top);
+        // Boarding presentation pass 2026-09-21: a real plank/gangway
+        // read (a board with rails and cross-slats), not a single thin
+        // line -- reusing the same wood palette _ship already paints its
+        // own deck planking with (0xff806047 base / 0xffac895d grain /
+        // 0xffd9bb84 highlight), so the crossing visually belongs to the
+        // same material as the decks it connects.
+        final normal = (to - from);
+        final length = normal.distance;
+        final perp = length == 0
+            ? const Offset(1, 0)
+            : Offset(-normal.dy, normal.dx) / length;
+        final boardWidth = 6.0;
         canvas.drawLine(
-          Offset(a.center.dx + x * a.width, a.bottom),
-          Offset(b.center.dx + x * b.width, b.top),
+          from - perp * boardWidth,
+          to - perp * boardWidth,
+          Paint()
+            ..color = const Color(0xff6b4f37)
+            ..strokeWidth = 2,
+        );
+        canvas.drawLine(
+          from + perp * boardWidth,
+          to + perp * boardWidth,
+          Paint()
+            ..color = const Color(0xff6b4f37)
+            ..strokeWidth = 2,
+        );
+        canvas.drawLine(
+          from,
+          to,
           Paint()
             ..color = const Color(0xffd9bb84)
-            ..strokeWidth = 5,
+            ..strokeWidth = boardWidth * 2,
         );
+        final slats = math.max(2, (length / 10).round());
+        for (var s = 1; s < slats; s++) {
+          final t = s / slats;
+          final centerPoint = Offset.lerp(from, to, t)!;
+          canvas.drawLine(
+            centerPoint - perp * boardWidth,
+            centerPoint + perp * boardWidth,
+            Paint()
+              ..color = const Color(0xffac895d)
+              ..strokeWidth = 1.2,
+          );
+        }
       }
     }
     _ship(canvas, a, da, true);
@@ -117,6 +209,8 @@ class TheaterPainter extends CustomPainter {
       b,
       crewA,
       da.crewFraction,
+      crewB,
+      sample?.opponentDamage.crewFraction ?? 1,
       true,
       crossing,
       sample?.planks ?? 0,
@@ -129,6 +223,8 @@ class TheaterPainter extends CustomPainter {
         a,
         crewB,
         sample.opponentDamage.crewFraction,
+        crewA,
+        da.crewFraction,
         false,
         crossing,
         sample.planks,
@@ -206,13 +302,32 @@ class TheaterPainter extends CustomPainter {
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.5,
     );
+    // Boarding presentation pass 2026-09-21: was a single faint 0.6px
+    // stroke per seam, easy to read as a flat brown rectangle at normal
+    // mobile scale. Alternating subtle shade bands BETWEEN seams (clipped
+    // to the actual deck silhouette, including the angled bow) give each
+    // strip a real "individual plank" read; the seam lines themselves are
+    // thicker and darker so they stay visible over the hull-damage tint.
+    c.save();
+    c.clipPath(deck);
+    var board = 0;
+    for (var x = r.left; x < r.right; x += 16) {
+      if (board.isOdd) {
+        c.drawRect(
+          Rect.fromLTRB(x, r.top, x + 16, r.bottom),
+          Paint()..color = Colors.black.withValues(alpha: .06),
+        );
+      }
+      board++;
+    }
+    c.restore();
     for (var x = r.left + 12; x < r.right - 12; x += 16) {
       c.drawLine(
         Offset(x, r.top + 2),
         Offset(x, r.bottom - 2),
         Paint()
-          ..color = const Color(0xffac895d)
-          ..strokeWidth = .6,
+          ..color = const Color(0xff5c4530)
+          ..strokeWidth = 1,
       );
     }
     for (var i = 0; i < masts; i++) {
@@ -272,65 +387,127 @@ class TheaterPainter extends CustomPainter {
     Color(0xff8ef58a), // navigator
   ];
 
+  // Boarding presentation pass 2026-09-21: deck topology and combat-dot
+  // behavior, entirely presentation-side (see this file's own doc
+  // comment: no Flutter/voyage/RNG/damage here -- BattleScript already
+  // determined the real outcome before a single dot moves). The rule
+  // set below mirrors the design brief almost verbatim:
+  //   - a combat-capable dot with a reachable enemy seeks it, rather
+  //     than idling/wandering while one exists (both attacker AND
+  //     defender sides -- previously only attackers ever reacted to an
+  //     active boarding; defenders kept doing the ordinary ambient
+  //     wander throughout, which is exactly the "wanders around during
+  //     active combat" bug).
+  //   - "water" (outside the deck rects and the plank bridge between
+  //     them) is never a valid position -- every branch below computes
+  //     `p` as a point ON one of the two deck rects or an explicit lerp
+  //     between deck-edge points, never an unconstrained offset; the
+  //     idle wander is the only place that could drift outside its own
+  //     deck, so it's now hard-clamped back into `home`.
+  //   - planks are the only crossing: a dot only ever leaves its own
+  //     deck via a lane index into DeckGeometry.stations(planks).
+  //   - occupancy: lane ASSIGNMENT (see DeckGeometry.laneAssignment) spreads crossing
+  //     dots round-robin across every available lane instead of index
+  //     parity alone, and QUEUE POSITION within a lane (not just a
+  //     flat per-dot delay) staggers when each dot actually starts
+  //     crossing, so a busy lane visibly queues rather than stacking
+  //     several dots on the identical path at the identical instant.
+  //   - retargeting: an attacker's destination slot tracks the
+  //     opposing side's CURRENT living count, so as defenders fall the
+  //     remaining attackers converge on the defenders that are still
+  //     actually there instead of a fixed, possibly-already-empty spot.
   void _crew(
     Canvas c,
     Rect home,
     Rect? enemy,
     int count,
     double fraction,
+    int enemyCount,
+    double enemyFraction,
     bool owned,
     double crossing,
     int planks,
     bool winner,
   ) {
     final living = (count * fraction).ceil().clamp(0, 20);
+    final enemyLiving = (enemyCount * enemyFraction).ceil().clamp(0, 20);
     final rows = count > 10 ? 3 : 2;
     final columns = (count / rows).ceil().clamp(1, 10);
+    Offset post(int i) => Offset(
+      home.left + home.width * (.12 + .72 * (i ~/ rows + .5) / columns),
+      home.center.dy + ((i % rows) - (rows - 1) / 2) * home.height * .24,
+    );
     for (var i = 0; i < living; i++) {
-      var p = Offset(
-        home.left + home.width * (.12 + .72 * (i ~/ rows + .5) / columns),
-        home.center.dy + ((i % rows) - (rows - 1) / 2) * home.height * .24,
-      );
-      final crossingNow = enemy != null && planks > 0 && i > 0 && i.isOdd;
-      if (!crossingNow) {
-        // Ordinary sailing/trading/exploring is still visually alive:
-        // a small per-dot wander (own speed/phase from its index, so
-        // dots don't move in lockstep) around its work position --
-        // believable ambient activity, not a real position/pathing
-        // simulation. Also runs during pre-boarding combat phases
-        // (encounter/maneuver/cannon), where crew are at their posts.
+      var p = post(i);
+      final boardingActive = enemy != null && planks > 0;
+      // Half the crew (odd indices) form the boarding party -- the rest
+      // hold the home deck. A defender never crosses; it instead reacts
+      // in place (see the defend branch below) once boarded.
+      final crossingNow = boardingActive && i > 0 && i.isOdd;
+      final defendingNow = boardingActive && !crossingNow && enemyLiving > 0;
+      if (!crossingNow && !defendingNow) {
+        // Ordinary sailing/trading/exploring, or a boarding this side has
+        // already won (no living enemy left to react to): still visually
+        // alive via a small per-dot wander (own speed/phase from its
+        // index, so dots don't move in lockstep) around its work
+        // position -- believable ambient activity, not a real position/
+        // pathing simulation. Hard-clamped to `home` so the wander can
+        // never visually drift past the deck's own edge into open water.
         final phase = i * 1.9;
         final speed = .3 + (i % 4) * .07;
         p = p.translate(
           math.sin(seconds * speed + phase) * home.width * .06,
           math.cos(seconds * speed * .8 + phase * 1.4) * home.height * .12,
         );
-      }
-      if (crossingNow) {
-        final laneIndex = i % planks;
-        final lane = DeckGeometry.stations(planks)[laneIndex];
+        p = Offset(
+          p.dx.clamp(home.left, home.right),
+          p.dy.clamp(home.top, home.bottom),
+        );
+      } else if (crossingNow) {
+        final lane = DeckGeometry.laneAssignment(i, planks);
+        final laneOffset = DeckGeometry.stations(planks)[lane.index];
         // Multiple crew sharing one lane (the common case: most hulls
-        // have only 1-2 planks) must not perfectly overlap or collapse
-        // into a single dot once aboard -- a small deterministic
-        // per-dot jitter spreads them within the lane, and a per-dot
-        // progress delay staggers the crossing itself so they visibly
-        // queue/spread rather than teleporting together in lockstep.
+        // have only 1-2 planks) must not perfectly overlap -- a small
+        // deterministic per-dot jitter spreads them within the lane.
         final jitter = (((i * 37) % 11) - 5) / 5.0 * .12;
-        final rank = i ~/ planks;
-        final personalDelay = (rank % 4) * .05;
         final bridge = Offset(
-          home.center.dx + (lane + jitter) * home.width,
+          home.center.dx + (laneOffset + jitter) * home.width,
           (home.center.dy + enemy.center.dy) / 2,
         );
+        // Retarget onto whichever defender slot is still actually
+        // living, cycling among only the currently-living slots rather
+        // than a fixed assignment that could aim at an already-empty
+        // position.
+        final targetSlot = enemyLiving > 0 ? i % enemyLiving : 0;
         final target = Offset(
-          enemy.center.dx + (lane + jitter) * enemy.width,
-          enemy.center.dy + ((rank % 3) - 1) * enemy.height * .18,
+          enemy.center.dx + (laneOffset + jitter) * enemy.width,
+          enemy.center.dy + ((targetSlot % 3) - 1) * enemy.height * .18,
         );
-        final personalCrossing = (crossing - personalDelay).clamp(0.0, 1.0);
+        // lane.queueDelay staggers crossing START by queue position
+        // within this specific lane (occupancy: a lane with several
+        // dots queued visibly sends them across one at a time, not
+        // simultaneously), on top of the existing per-rank delay.
+        final personalCrossing = (crossing - lane.queueDelay).clamp(0.0, 1.0);
         final t = winner ? personalCrossing : math.min(personalCrossing, .55);
         p = t < .5
             ? Offset.lerp(p, bridge, t * 2)!
             : Offset.lerp(bridge, target, (t - .5) * 2)!;
+      } else {
+        // Defending: hold post but turn to face/lean toward the nearest
+        // active plank lane -- a real, if small, reaction to "enemies
+        // are the objective," instead of continuing the idle wander
+        // while genuinely under boarding.
+        final nearestLane = DeckGeometry.stations(planks).reduce(
+          (a, b) => (a - (i.isEven ? -.1 : .1)).abs() < (b - (i.isEven ? -.1 : .1)).abs() ? a : b,
+        );
+        p = p.translate(
+          nearestLane * home.width * .18,
+          math.sin(seconds * 1.4 + i) * home.height * .04,
+        );
+        p = Offset(
+          p.dx.clamp(home.left, home.right),
+          p.dy.clamp(home.top, home.bottom),
+        );
       }
       c.drawCircle(
         p,
@@ -354,6 +531,7 @@ class TheaterPainter extends CustomPainter {
       }
     }
   }
+
 
   @override
   bool shouldRepaint(TheaterPainter old) =>

@@ -183,7 +183,11 @@ void main() {
     'representatives are bounded, scale slowly, and respect surviving crew',
     () {
       expect(representativeCount('Sloop', 18), 6);
-      expect(representativeCount('Brig', 50), 12);
+      // Ship/combat overhaul pass 2026-09-21: Brig's own crew base rose
+      // 55 -> 70 (see hull_catalog.dart) -- 50/70 crew is proportionally
+      // slightly less than full strength, so this now lands at 11 (still
+      // near its 12-dot representativeCap), not a full 12.
+      expect(representativeCount('Brig', 50), 11);
       expect(representativeCount('Brig', 250), 12);
       expect(representativeCount('Man-of-War', 2000), 20);
       expect(representativeCount('Man-of-War', 2000, importantCrew: 50), 20);

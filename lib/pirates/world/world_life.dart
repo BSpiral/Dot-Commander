@@ -71,6 +71,22 @@ class WorldLife {
   final Map<String, PortWork> works = {};
   double arrivalClock = 0;
   int nextNpc = 1;
+  // Ship/combat overhaul pass 2026-09-21 (pirate/hunter ecosystem
+  // damping): counts down toward 0; a new hunter may only be recruited
+  // once it's at 0 (then reset -- see tick's own hunter-recruitment
+  // block). Root cause this fixes: `required` was recomputed fresh from
+  // the INSTANTANEOUS pirateCount every single tick with no cooldown at
+  // all, so a pirateCount that bounces across LifeBalance.hunterThresholds
+  // (rising/falling faster than a spawned hunter batch can visibly
+  // suppress piracy and then retire) could trigger repeated fresh
+  // recruitment rounds stacking on top of a still-retiring previous
+  // batch -- a real live report: 8 pirates/0 hunters, then ~10 minutes
+  // later 10 hunters/1 pirate. hunterThresholds/hunterRetire already give
+  // spawn-vs-retire a real hysteresis GAP (4/8 to trigger vs 2 to
+  // retire); this adds the missing TIME dimension, matching the same
+  // "roll on a clock, not every tick" pattern arrivalClock/arrivalInterval
+  // already use for ordinary NPC arrivals just below.
+  double hunterSpawnCooldown = 0;
   // Per-ship escalating discovery probability -- see checkDiscovery.
   // Keyed by ship ID so each of the player's commands builds its own
   // independent luck streak; absent entries mean "at base probability"
@@ -215,9 +231,14 @@ class WorldLife {
         );
       }
     } else if (specialist == 'bosun') {
+      // Ship/combat overhaul pass 2026-09-21: was the raw hull base --
+      // a ship that has genuinely grown past it via Command Tree crew
+      // investment (see FleetProgress.crewCapacity) would otherwise never
+      // be considered short of crew at all once past that base, even
+      // mid-battle-losses.
       final amount = min(
         LifeBalance.fieldLimit,
-        max(0, hullFor(s.hullType).crew - s.crewCount),
+        max(0, v.progress.crewCapacity(s) - s.crewCount),
       );
       final price =
           (amount *
@@ -318,7 +339,7 @@ class WorldLife {
     final repairSupply = cmd?.portRepairSupply ?? LifeBalance.serviceCapacity;
     final repair = min(max(0.0, s.maxHullHp - s.hullHp), repairSupply.toDouble());
     final refill = min(
-      max(0, hullFor(s.hullType).crew - s.crewCount),
+      max(0, v.progress.crewCapacity(s) - s.crewCount),
       LifeBalance.serviceCapacity,
     );
     final w = PortWork(
@@ -412,7 +433,7 @@ class WorldLife {
         serviceMultiplier(s, specialist: 'bosun'),
       );
     } else if (w.phase == 2) {
-      s.crewCount = min(hullFor(s.hullType).crew, s.crewCount + w.crew);
+      s.crewCount = min(v.progress.crewCapacity(s), s.crewCount + w.crew);
       w.phase = 3;
       final free = max(0, v.progress.effectiveHoldCapacity(s) - s.cargo);
       w.poor = w.poor || (s.playerOwned && v.coins < LifeBalance.cargoBuy);
@@ -438,9 +459,9 @@ class WorldLife {
       // Live playtest repair pass 2026-09-20: this used to re-clamp to
       // the RAW hull base (hullFor(s.hullType).holds) even though `free`
       // just above already correctly sized w.bought against the ship's
-      // real effective capacity (Ship Hold Fleet Tree + equipment) --
-      // silently discarding any cargo bought past the hull's own base,
-      // making legitimate Hull cargo upgrades meaningless in practice.
+      // real effective capacity (cargoCeiling + equipment) -- silently
+      // discarding any cargo bought past the hull's own base, making
+      // legitimate Hull cargo upgrades meaningless in practice.
       s.cargo = min(v.progress.effectiveHoldCapacity(s), s.cargo + w.bought);
       w.phase = 4;
       s.fleeing = false;
@@ -486,6 +507,28 @@ class WorldLife {
     return BehaviorMode.merchant;
   }
 
+  // Encounter/ship-selection balance pass 2026-09-21: Man-of-War used to
+  // be drawn UNIFORMLY with Frigate/Brig within the ordinary (non-hunter)
+  // Privateer hull pool -- a 1-in-3 chance, compounding with Privateer's
+  // own (now-reduced, see LifeBalance.roleWeights) ambient population
+  // weight to make Man-of-War feel like ordinary traffic rather than the
+  // rare "OH FUCK, do not fight that" encounter it's meant to be.
+  // Frigate/Brig stay common and comparably threatening; Man-of-War is
+  // now a genuine minority outcome.
+  static const _privateerHullWeights = {
+    'Frigate': .45,
+    'Brig': .45,
+    'Man-of-War': .10,
+  };
+  String _weightedHull(Map<String, double> weights) {
+    var roll = v.rng.nextDouble() * weights.values.reduce((a, b) => a + b);
+    for (final entry in weights.entries) {
+      roll -= entry.value;
+      if (roll <= 0) return entry.key;
+    }
+    return weights.keys.last;
+  }
+
   void spawn(BehaviorMode role, {bool hunter = false}) {
     if (npcCount >= LifeBalance.maxNpcs) return;
     final hulls = switch (role) {
@@ -498,9 +541,14 @@ class WorldLife {
       ],
       BehaviorMode.pirate => ['Schooner', 'Brig', 'Frigate', 'Sloop'],
       BehaviorMode.explorer => ['Pirogue', 'Barque', 'Sloop', 'Schooner'],
-      BehaviorMode.privateer => ['Frigate', 'Brig', 'Man-of-War'],
+      BehaviorMode.privateer => null, // see _privateerHullWeights below
     };
-    final h = hullFor(hunter ? 'Frigate' : hulls[v.rng.nextInt(hulls.length)]);
+    final chosenHull = hunter
+        ? 'Frigate'
+        : role == BehaviorMode.privateer
+        ? _weightedHull(_privateerHullWeights)
+        : hulls![v.rng.nextInt(hulls.length)];
+    final h = hullFor(chosenHull);
     final first = v.ships.first;
     final s = Vessel(
       id: 'arrival-${nextNpc++}',
@@ -581,8 +629,20 @@ class WorldLife {
     final hunters = v.ships
         .where((s) => s.hunter && (s.atSea || s.respawnRemaining > 0))
         .length;
-    for (var i = hunters; i < required; i++) {
-      spawn(BehaviorMode.privateer, hunter: true);
+    hunterSpawnCooldown = max(0, hunterSpawnCooldown - dt);
+    if (hunters < required) {
+      if (hunterSpawnCooldown == 0) {
+        spawn(BehaviorMode.privateer, hunter: true);
+        // Only ONE recruitment per cooldown window, even if `required`
+        // jumped by 2 at once -- deliberately conservative: a genuinely
+        // sustained (not momentary) pirate surge will still reach
+        // `required` over a couple of cooldown windows, but a single
+        // bounce across the threshold can never mint a whole fresh
+        // batch in one shot.
+        hunterSpawnCooldown = LifeBalance.hunterSpawnCooldownSeconds;
+      }
+    } else {
+      hunterSpawnCooldown = 0;
     }
     if (v.ships.length > 60) {
       final candidates = v.ships
@@ -647,12 +707,22 @@ class WorldLife {
     'nextNpc': nextNpc,
     'works': works.values.map((w) => w.toJson()).toList(),
     'discoveryProbability': discoveryProbability,
+    'hunterSpawnCooldown': hunterSpawnCooldown,
   };
   void restore(Map<String, dynamic> j) {
     arrivalClock = (j['clock'] as num).toDouble();
     nextNpc = j['nextNpc'];
     if (!arrivalClock.isFinite || arrivalClock < 0 || nextNpc < 1) {
       throw const FormatException('Invalid world clock');
+    }
+    // Absent in saves from before this pass -- 0 (cooldown already
+    // elapsed) is a safe, conservative default, matching how a fresh
+    // WorldLife already starts.
+    hunterSpawnCooldown = (j['hunterSpawnCooldown'] as num? ?? 0).toDouble();
+    if (!hunterSpawnCooldown.isFinite ||
+        hunterSpawnCooldown < 0 ||
+        hunterSpawnCooldown > LifeBalance.hunterSpawnCooldownSeconds) {
+      throw const FormatException('Invalid hunter spawn cooldown');
     }
     discoveryProbability.clear();
     final rawProbability = j['discoveryProbability'] as Map<String, dynamic>?;

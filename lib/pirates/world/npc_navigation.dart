@@ -2,7 +2,6 @@ import 'dart:math';
 import '../../core/movement/point.dart';
 import '../../core/simulation/vessel.dart';
 import '../encounters/pirates_voyage.dart';
-import '../ships/hull_catalog.dart';
 
 abstract final class NpcBalance {
   static const pirateRadius = 170.0,
@@ -31,7 +30,7 @@ class NpcNavigation {
 
   double condition(Vessel s) => min(
     s.hullHp / s.maxHullHp,
-    s.crewCount / hullFor(s.hullType).crew,
+    s.crewCount / v.progress.crewCapacity(s),
   ).clamp(0, 1);
   double power(Vessel s) =>
       s.hullHp +

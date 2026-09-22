@@ -241,15 +241,27 @@ void main() {
       expect(c.portRepairSupply, 100);
     });
 
-    test('effective ship cargo capacity never exceeds the absolute 100 cap, regardless of base hull + Fleet Tree + equipment', () {
+    test('effective ship cargo capacity never exceeds the absolute 100 cap, regardless of base hull + equipment', () {
+      // Ship/combat overhaul pass 2026-09-21: combinedHoldCapacity now
+      // also takes a hull-specific cargoCeiling (see its own doc comment
+      // -- the fix for a small hull reaching 52+ cargo purely from the
+      // fleet-wide Ship Hold tree). Deliberately generous (1000, well
+      // above 100) here so THIS test still isolates the absolute-100
+      // outer bound specifically, independent of any hull's own tighter
+      // ceiling -- that per-hull clamp is covered separately in
+      // test/ship_combat_overhaul_test.dart.
+      //
+      // Clarification pass 2026-09-21: the fleet-wide Ship Hold tree
+      // term (the old `shipHoldTreeLevel` parameter) is REMOVED entirely
+      // -- see FleetTrack.shipHold's own doc comment -- so this no
+      // longer loops over a tree level at all; there is no such
+      // parameter left to vary.
       for (final base in [0, 8, 50, 100, 200]) {
-        for (final level in [0, 500, 1000, 5000]) {
-          for (final equip in [0.0, .08, .5, 2.0]) {
-            expect(
-              Balance.combinedHoldCapacity(baseHold: base, shipHoldTreeLevel: level, equipmentBonus: equip),
-              lessThanOrEqualTo(100),
-            );
-          }
+        for (final equip in [0.0, .08, .5, 2.0]) {
+          expect(
+            Balance.combinedHoldCapacity(baseHold: base, cargoCeiling: 1000, equipmentBonus: equip),
+            lessThanOrEqualTo(100),
+          );
         }
       }
     });

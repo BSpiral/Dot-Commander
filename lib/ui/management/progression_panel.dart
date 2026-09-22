@@ -171,11 +171,19 @@ class ProgressionPanel extends StatelessWidget {
           subtitle: Text('Shared by all commands. Does not increase CP.'),
         ),
       );
-      for (final t in [FleetTrack.offline, FleetTrack.shipHold]) {
+      // Ship/combat overhaul clarification pass 2026-09-21: FleetTrack.
+      // shipHold ("Ship Hold 0/1000 -- +1 cargo hold on every ship per
+      // level") is retired -- removed from this row list entirely, so
+      // it's no longer purchasable or even visible. Cargo capacity is
+      // now governed entirely by hull identity (HullDefinition.
+      // cargoCeiling) + legitimate equipment -- see FleetProgress.
+      // effectiveHoldCapacity. Offline Effectiveness remains the only
+      // Fleet-wide progression row.
+      for (final t in [FleetTrack.offline]) {
         final level = p.tree[t] ?? 0, cost = Balance.treeCost(p.tree[t] ?? 0);
         final title = switch (t) {
           FleetTrack.offline => 'Offline Effectiveness',
-          FleetTrack.shipHold => 'Ship Hold',
+          FleetTrack.shipHold => 'Ship Hold', // unreachable: retired, never in this list
           FleetTrack.portFavor => 'Port Relations', // unreachable: never in this list
         };
         final detail = switch (t) {
@@ -185,10 +193,7 @@ class ProgressionPanel extends StatelessWidget {
           FleetTrack.offline =>
             'Increases how long your fleet keeps earning offline income '
                 'while away. Current cap: ${p.offlineCapLabel}; grows from 4h to 8h.',
-          FleetTrack.shipHold =>
-            '+1 cargo hold on every ship per level, up to +50 total '
-                '(absolute cap 100 combined with hull base and equipment). '
-                'Current bonus: +${(50 * level / 1000).floor()}.',
+          FleetTrack.shipHold => '', // unreachable: retired, never in this list
           FleetTrack.portFavor => '',
         };
         widgets.add(

@@ -3,6 +3,7 @@ import '../../monetization/monetization_ids.dart';
 import '../../monetization/rewarded_chest_service.dart';
 import '../../pirates/encounters/pirates_voyage.dart';
 import '../../pirates/ships/crew_representation.dart';
+import '../../pirates/theater/result_script.dart';
 import '../theater/battle_deck.dart';
 import 'package:flutter/foundation.dart';
 import '../theater/deck_theater.dart';
@@ -55,6 +56,37 @@ class ManagementPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final hull = hullFor(ship.hullType);
+    // Ship/combat overhaul pass 2026-09-21: crew capacity can now grow
+    // past the hull's raw base (see FleetProgress.crewCapacity's own doc
+    // comment) -- using hull.crew here would silently re-cap a genuinely
+    // developed ship's Crew bar/text at its OLD, un-grown maximum.
+    final crewCap = voyage?.progress.crewCapacity(ship) ?? hull.crew;
+    // Ship/combat overhaul pass 2026-09-21 (cannon HUD fix): while THIS
+    // ship is in an active encounter, the Hull/Crew bars below must
+    // track the same already-authoritative, already-decided damage the
+    // BattleDeck animation is revealing progressively (see
+    // EncounterResult.playerFirst and TheaterSample.playerDamage) --
+    // not the raw live Vessel state, which PiratesVoyage._complete only
+    // actually mutates once the whole encounter animation finishes (see
+    // pirates_voyage.dart). Before this fix, these bars stayed frozen at
+    // the PRE-battle value for the entire fight, then snapped instantly
+    // to the post-battle value the moment it ended -- cannon fire with
+    // no visible consequence until the very end. The underlying numbers
+    // were never fabricated (TheaterDamage is derived directly from the
+    // real, already-resolved EncounterResult), just not rendered as a
+    // legible bar anywhere during the fight itself.
+    final liveEncounter = encounter;
+    double hullFraction, crewFraction;
+    if (liveEncounter != null) {
+      final sample = scriptForResult(
+        liveEncounter.result.playerFirst(),
+      ).sample(liveEncounter.elapsed);
+      hullFraction = (1 - sample.playerDamage.hull).clamp(0.0, 1.0);
+      crewFraction = sample.playerDamage.crewFraction.clamp(0.0, 1.0);
+    } else {
+      hullFraction = (ship.hullHp / ship.maxHullHp).clamp(0.0, 1.0);
+      crewFraction = (ship.crewCount / crewCap).clamp(0.0, 1.0);
+    }
     Widget note(IconData icon, String title, String body) => ListTile(
       leading: Icon(icon, color: const Color(0xffddbe7c)),
       title: Text(title),
@@ -102,11 +134,11 @@ class ManagementPanel extends StatelessWidget {
             children: [
               Text(
                 // Live playtest repair pass 2026-09-20: was hull.holds
-                // (raw hull base) -- never reflected Ship Hold Fleet Tree
-                // or equipment cargo bonuses, so an investment that
+                // (raw hull base) -- never reflected cargoCeiling or
+                // equipment cargo bonuses, so an investment that
                 // genuinely raised usable capacity looked like it did
                 // nothing here.
-                'Hull ${ship.hullHp.toStringAsFixed(0)}/${ship.maxHullHp.toStringAsFixed(0)} • Crew ${ship.crewCount}/${hull.crew} • Cargo ${ship.cargo}/${voyage?.progress.effectiveHoldCapacity(ship) ?? hull.holds}',
+                'Hull ${ship.hullHp.toStringAsFixed(0)}/${ship.maxHullHp.toStringAsFixed(0)} • Crew ${ship.crewCount}/$crewCap • Cargo ${ship.cargo}/${voyage?.progress.effectiveHoldCapacity(ship) ?? hull.holds}',
                 style: const TextStyle(fontSize: 12, color: Colors.white70),
               ),
               const SizedBox(height: 3),
@@ -116,7 +148,7 @@ class ManagementPanel extends StatelessWidget {
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(2),
                       child: LinearProgressIndicator(
-                        value: (ship.hullHp / ship.maxHullHp).clamp(0, 1),
+                        value: hullFraction,
                         minHeight: 3,
                       ),
                     ),
@@ -126,7 +158,7 @@ class ManagementPanel extends StatelessWidget {
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(2),
                       child: LinearProgressIndicator(
-                        value: (ship.crewCount / hull.crew).clamp(0, 1),
+                        value: crewFraction,
                         minHeight: 3,
                         color: Colors.teal,
                       ),

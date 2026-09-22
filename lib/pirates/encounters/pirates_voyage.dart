@@ -196,7 +196,11 @@ class PiratesVoyage extends Simulation {
   }
 
   bool buyFleetTree(FleetTrack track) {
-    if (track != FleetTrack.offline && track != FleetTrack.shipHold) {
+    // Ship/combat overhaul clarification pass 2026-09-21: FleetTrack.
+    // shipHold is retired -- see its own doc comment in fleet_progress
+    // .dart. Offline Effectiveness remains the only purchasable Fleet
+    // Tree.
+    if (track != FleetTrack.offline) {
       return false;
     }
     final level = progress.tree[track] ?? 0,
@@ -335,6 +339,28 @@ class PiratesVoyage extends Simulation {
     if (encountersEnabled && npcDecisions) {
       final safety = npc.destination(ship);
       if (safety != null) return safety;
+    }
+    // Ship/combat overhaul pass 2026-09-21: NpcNavigation.tick's own
+    // needsPort() cargo-pressure check (the SAME NpcBalance.fullHold
+    // threshold reused here) is deliberately scoped to non-player ships
+    // only (see its own `!s.playerOwned` filter) -- so a player's own
+    // Pirate-behavior ship, left to auto-hunt the nearest target via the
+    // exact same chooseDestination path an NPC pirate uses, never had
+    // anything telling it to prioritize selling once its hold was
+    // nearly/fully full (a live report: a ship at 11/12 cargo kept
+    // engaging/boarding rather than heading to port). This only affects
+    // what the ship seeks NEXT (an already-engaged fight still resolves
+    // normally -- combat availability never checks returnToPort), and
+    // reuses the exact same life.portFor/returnToPort path every other
+    // return-to-port reason already goes through, so selling still
+    // happens through the ordinary port-service flow, not a parallel
+    // merchant AI.
+    if (!ship.returnToPort &&
+        ship.playerOwned &&
+        ship.behavior == BehaviorMode.pirate &&
+        ship.cargo >= progress.effectiveHoldCapacity(ship) * NpcBalance.fullHold) {
+      ship.returnToPort = true;
+      life.log(ship, 'Returning to port: cargo hold nearly full');
     }
     if (ship.returnToPort || ship.recovering || ship.retiring) {
       return life.portFor(ship);

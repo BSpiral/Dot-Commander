@@ -265,10 +265,11 @@ void main() {
         }
         expect(covered, {ChestCategory.hull, ChestCategory.crew, ChestCategory.officers});
         // Deliberately NOT ad-reachable: no rewarded ad unit exists for
-        // these (still purchasable via the Shop's paid chest grid, which
-        // offers all 5 categories individually).
+        // this (still purchasable via the Shop's paid chest grid, which
+        // offers all 4 categories individually -- ChestCategory.cannon/
+        // "Ordnance" was removed entirely in the ship/combat overhaul
+        // pass 2026-09-21, see fleet_progress.dart's own doc comment).
         expect(covered.contains(ChestCategory.equipment), isFalse);
-        expect(covered.contains(ChestCategory.cannon), isFalse);
       },
     );
 

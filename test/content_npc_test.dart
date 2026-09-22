@@ -85,7 +85,12 @@ void main() {
       v.update(.01);
       final run = v.active.single;
       v.update(run.result.duration);
-      expect(a.cargo, 8);
+      // Ship/combat overhaul pass 2026-09-21: Frigate's cargo hold is now
+      // deliberately tiny (base 5, cargoCeiling 12 -- "poor at directly
+      // making money", see hull_catalog.dart), so an 8-cargo prize no
+      // longer fits entirely; the capture correctly clamps to what the
+      // captor can actually hold (5) rather than the full loot amount.
+      expect(a.cargo, 5);
       v.npc.tick(1);
       expect(a.returnToPort, isTrue);
       a.destination = v.life.portFor(a);
@@ -150,14 +155,24 @@ void main() {
   );
 
   test(
-    'eleven distinct hulls are a toolbox, not a single ascending ladder',
+    // Ship/combat overhaul pass 2026-09-21: roster grew from 11 to 16
+    // (Longship, Knarr, Corbita, Caravel, Xebec added -- see hull_catalog
+    // .dart) and Frigate's own speed was deliberately raised to 45 (equal
+    // to Brig's) specifically so it can catch what it hunts, so it's no
+    // longer slower than the Galleon -- see the roster's own doc
+    // comments and this file's dedicated ship_combat_overhaul_test.dart
+    // for the full revised-roster assertions. This test keeps checking
+    // the handful of toolbox-not-ladder relationships that are still
+    // true by design.
+    'sixteen distinct hulls are a toolbox, not a single ascending ladder',
     () {
-      expect(hullCatalog.length, 11);
+      expect(hullCatalog.length, 16);
       expect(hullFor('Fluyt').holds, greaterThan(hullFor('Galleon').holds));
       expect(hullFor('Man-of-War').guns, greaterThan(hullFor('Galleon').guns));
       expect(
-        hullFor('Galleon').baseSpeed,
-        greaterThan(hullFor('Frigate').baseSpeed),
+        hullFor('Frigate').baseSpeed,
+        greaterThan(hullFor('Galleon').baseSpeed),
+        reason: 'Frigate is an interceptor -- it must be able to catch a Galleon, not the reverse',
       );
       expect(
         hullFor('Sloop').baseSpeed,

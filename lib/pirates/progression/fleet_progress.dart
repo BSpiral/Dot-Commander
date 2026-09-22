@@ -8,11 +8,23 @@ enum CommandTrack { hull, firepower, crew, navigation, portRelations }
 
 // shipHold added 2026-09-20 (Port Relations balance pass): fleet-wide
 // (shared by every player ship, like offline) +1-per-step cargo hold
-// progression, up to +50 total at max level -- see
-// FleetProgress.effectiveHoldCapacity and buyFleetTree. portFavor
-// remains the pre-2026-09-14 deprecated/migrated-away slot (see
-// VoyageStore's legacy-save migration below); shipHold is a genuinely
-// new, unrelated slot, not a repurposing of it.
+// progression, up to +50 total at max level.
+//
+// Ship/combat overhaul clarification pass 2026-09-21: shipHold is now
+// RETIRED -- the same "every hull gets an identical flat bonus" design
+// this whole pass exists to fix for cargo (see HullDefinition.
+// cargoCeiling's own doc comment; a flat +50 shared by every ship was
+// exactly how a 2-hold Pirogue could reach 52+ cargo). Cargo capacity is
+// now governed entirely by hull identity (base hold) + cargoCeiling +
+// legitimate equipment ('hold' effect items), with no fleet-wide term at
+// all -- see Balance.combinedHoldCapacity. [shipHold] itself is kept in
+// this enum (never deleted) purely so `FleetTrack.values.byName(...)`
+// can still parse an old save's persisted 'shipHold' key without
+// throwing -- FleetProgress.restore immediately discards any such value
+// (see its own doc comment) rather than ever acting on it again.
+// portFavor remains the pre-2026-09-14 deprecated/migrated-away slot
+// (see VoyageStore's legacy-save migration below) -- a different,
+// earlier retirement of the same shape.
 enum FleetTrack { portFavor, offline, shipHold }
 
 enum ItemKind {
@@ -82,7 +94,19 @@ ItemKind savedKind(String name, [String? specialist]) => switch (name) {
 
 enum ChestKind { common, rare }
 
-enum ChestCategory { hull, equipment, crew, cannon, officers }
+/// Ship/combat overhaul pass 2026-09-21: [cannon] ("Ordnance") is REMOVED
+/// -- it was already a dead-end category: ChestCategory.hull's pool has
+/// spanned the full Hull Upgrade family (hull + cannon + rigging +
+/// reinforcement + figurehead, see [hullSlots]) since the 2026-09-20
+/// playability pass, so every cannon item Ordnance could ever award was
+/// already independently reachable through Hull. It was never reachable
+/// via any rewarded ad (see RewardedAdGroup's own doc comment), and
+/// ChestCategory itself is never persisted in save data (only the
+/// resulting EquipmentItem is, keyed by ItemKind/rarity/contentId -- see
+/// EquipmentItem.toJson/fromJson) -- so removing it needs no save
+/// migration. The four canonical chest categories from here on: Hull,
+/// Officer, Crew, Equipment.
+enum ChestCategory { hull, equipment, crew, officers }
 
 extension ChestCategoryContent on ChestCategory {
   /// Live playtest repair pass 2026-09-20: [hull] used to accept ONLY
@@ -92,23 +116,23 @@ extension ChestCategoryContent on ChestCategory {
   /// hull's own slots, which [hullSlots] mirrors exactly). Widened to the
   /// full family so "Hull Chest -> Hull upgrades only" is actually true
   /// of everything it can award, not just its narrowest member.
-  /// ChestCategory.equipment and ChestCategory.cannon are UNCHANGED and
-  /// still independently reachable (narrower gem-purchase-only slices of
-  /// this same wider family) -- see roll()'s own doc comment for how the
-  /// overlap is handled.
+  /// ChestCategory.equipment is UNCHANGED and still independently
+  /// reachable (a narrower gem-purchase-only slice of this same wider
+  /// family) -- see roll()'s own doc comment for how the overlap is
+  /// handled.
   bool accepts(ItemKind kind) => switch (this) {
     ChestCategory.hull => hullSlots.contains(kind),
     // Rigging/Reinforcement/Figurehead are new sub-slots of what used to
     // be the single 'equipment' ItemKind; they all still come from the
     // same "Equipment" paid/ad chest category as before, so the Shop's
-    // chest-buying UI keeps exactly the same 5 categories/10 rows it had
-    // -- this pass reorganizes the UPGRADES page (see UpgradeCategory
-    // below), not chest purchasing, which is out of scope.
+    // chest-buying UI keeps exactly the same 4 categories/8 rows it had
+    // after Ordnance's removal -- this pass reorganizes the UPGRADES page
+    // (see UpgradeCategory below), not chest purchasing, which is out of
+    // scope.
     ChestCategory.equipment =>
       kind == ItemKind.rigging ||
           kind == ItemKind.reinforcement ||
           kind == ItemKind.figurehead,
-    ChestCategory.cannon => kind == ItemKind.cannon,
     ChestCategory.crew => crewSlots.contains(kind),
     ChestCategory.officers => officerSlots.contains(kind),
   };
@@ -121,7 +145,6 @@ extension ChestCategoryContent on ChestCategory {
     ChestCategory.hull => 'Hull',
     ChestCategory.equipment => 'Equipment',
     ChestCategory.crew => 'Crew Equipment',
-    ChestCategory.cannon => 'Ordnance',
     ChestCategory.officers => 'Officer',
   };
 }
@@ -275,14 +298,23 @@ abstract final class Balance {
   /// baseline). A ship's own throughput factor is its (speed x cargo
   /// hold) relative to the Galley -- the hull the game's own content
   /// already designates as the dedicated Merchant/trading hull (see
-  /// HullDefinition's favoredRole in hull_catalog.dart) -- so a fresh
-  /// starting Sloop (speed 66, hold 4) computes to ~339/hour, closely
-  /// matching the ~324/hour ("-40%") starting-ship estimate from the
-  /// 2026-09-20 economy audit. offlineCapMinutes (still keyed off the
+  /// HullDefinition's favoredRole in hull_catalog.dart).
+  ///
+  /// Ship/combat overhaul pass 2026-09-21: [_referenceThroughputSpeed]/
+  /// [_referenceThroughputHolds] are recalibrated to the Galley's
+  /// REVISED base stats (speed 32, holds 22 -- see hull_catalog.dart;
+  /// were 35/12) so "a Galley at zero bonuses is exactly the 1.0
+  /// reference ship" stays true by construction. A fresh starting Sloop
+  /// (speed 66, hold 4) now computes to ~203/hour -- lower than the old
+  /// ~339/hour figure, since the reference Galley itself got a much
+  /// larger cargo hold in this pass (throughput is RELATIVE to the
+  /// reference, so strengthening the reference proportionally lowers
+  /// everyone else's relative figure without changing anyone's actual
+  /// speed/hold numbers). offlineCapMinutes (still keyed off the
   /// Offline Effectiveness Fleet Tree, 4h-8h) is UNCHANGED -- only the
-  /// RATE was broken, not the cap.
+  /// reference recalibration, not the cap.
   static const neutralShipCoinsPerHour = 540.0;
-  static const _referenceThroughputSpeed = 35.0, _referenceThroughputHolds = 12;
+  static const _referenceThroughputSpeed = 32.0, _referenceThroughputHolds = 22;
 
   /// A single ship's own (speed x cargo hold) throughput relative to the
   /// Galley reference -- 1.0 for a Galley with no bonuses, less for a
@@ -349,32 +381,47 @@ abstract final class Balance {
       moneyShipCooldownJitterSimSeconds = 120.0,
       moneyShipDespawnSimSeconds = 90.0;
 
-  /// Port Relations balance pass 2026-09-20: how a ship's hull base
-  /// hold, its share of the fleet-wide Ship Hold tree (0-50, see
-  /// FleetTrack.shipHold), and equipment's own hold percentage combine
-  /// into one effective capacity -- absolute-capped at 100 regardless of
-  /// source. Deliberately hull-independent/pure (takes plain numbers,
+  /// Port Relations balance pass 2026-09-20: how a ship's hull base hold
+  /// and equipment's own hold percentage combine into one effective
+  /// capacity. Deliberately hull-independent/pure (takes plain numbers,
   /// not a Vessel) so it's directly testable against the design's own
   /// worked examples without needing a real hull of that exact base
   /// hold; see FleetProgress.effectiveHoldCapacity for the real,
   /// hull-driven entry point every gameplay call site actually uses.
+  ///
+  /// Ship/combat overhaul pass 2026-09-21: the OLD absolute cap here was
+  /// a flat 100 for every hull, combined with a fleet-wide +50 Ship Hold
+  /// tree bonus (FleetTrack.shipHold, shared identically by every ship
+  /// regardless of hull) -- together these could take a 2-hold Pirogue
+  /// to 52+ effective cargo, erasing hull identity (a small/fast hull
+  /// becoming, in cargo terms, as capable as a dedicated cargo
+  /// specialist). [cargoCeiling] (see HullDefinition's own doc comment)
+  /// is now the REAL cap, per hull; 100 remains only as the absolute
+  /// outer bound no hull's ceiling is allowed to exceed.
+  ///
+  /// Clarification pass 2026-09-21: the fleet-wide Ship Hold term itself
+  /// is now REMOVED entirely (not merely superseded) -- it was the same
+  /// "identical flat bonus for every hull" pattern cargoCeiling exists
+  /// to prevent, so keeping it alongside cargoCeiling as a second,
+  /// redundant capacity source would have left the old mechanic's
+  /// player-facing "Ship Hold 0/1000" purchase row live for no real
+  /// effect beyond its own already-fixed clamp. Cargo capacity is now
+  /// governed ENTIRELY by hull identity (baseHold, cargoCeiling) plus
+  /// legitimate equipment -- no fleet-wide term of any kind.
   static int combinedHoldCapacity({
     required int baseHold,
-    required int shipHoldTreeLevel,
+    required int cargoCeiling,
     double equipmentBonus = 0,
   }) {
-    final treeBonus = 50 * shipHoldTreeLevel ~/ maxLevel;
-    return min(100, ((baseHold + treeBonus) * (1 + equipmentBonus)).round());
+    return min(
+      min(100, cargoCeiling),
+      (baseHold * (1 + equipmentBonus)).round(),
+    );
   }
 
   static const slotCosts = LifeBalance.commandPrices;
   static const chestCosts = {ChestKind.common: 10, ChestKind.rare: 50};
   static int treeCost(int level) => 1 + level + (level * level ~/ 100);
-  static const hullPerLevel = 1.0,
-      firePerLevel = .1,
-      crewPerLevel = .002,
-      speedPerLevel = .0005,
-      handlingPerLevel = .0005;
 }
 
 /// Each physical copy has its own ID. Set IDs are reserved metadata, not
@@ -699,21 +746,56 @@ class FleetProgress {
       s.crewCount * 1.5 * s.crewEffectiveness +
       s.speed * .2 +
       s.handling * 20);
+  /// A ship's real effective max crew: hull base plus Command Tree
+  /// crew-count growth (the SAME reward-units x per-unit-rate pattern
+  /// maxHullHp/firepower already use), capped per-hull at
+  /// HullDefinition.crewCeiling -- see apply's own doc comment for why a
+  /// hull-specific ceiling matters here (a fully-developed Sloop reaching
+  /// roughly 70 crew from a base of 18, without every other hull growing
+  /// the identical flat amount). NPCs (no CommandProgress entry) get
+  /// their unmodified hull base only -- crew growth is a player-command
+  /// mechanic, matching effectiveHoldCapacity's own NPC behavior. Every
+  /// call site that used to treat `hullFor(hullType).crew` as a ship's
+  /// max crew (port crew-refill/repair, field support, and this same
+  /// HUD's Crew bar) must use THIS instead, or a ship that has genuinely
+  /// grown past its raw hull base would silently be capped back down to
+  /// it.
+  int crewCapacity(Vessel s) {
+    final h = hullFor(s.hullType);
+    final c = commands[s.id];
+    if (c == null) return h.crew;
+    final growth = (c.units(CommandTrack.crew) * LifeBalance.crewCountPerUnit).round();
+    return min(h.crewCeiling, h.crew + growth);
+  }
+
   void apply(Vessel s, {bool preserveDamage = true}) {
     final c = commands[s.id];
     if (c == null) return;
     final equippedHull = item(c.equipped[ItemKind.hull]);
     final h = hullFor(equippedHull?.hullType ?? 'Sloop');
     final hpFraction = (s.hullHp / s.maxHullHp).clamp(0.0, 1.0);
-    final oldCrew = hullFor(s.hullType).crew;
-    final crewFraction = (s.crewCount / oldCrew).clamp(0.0, 1.0);
+    // Ship/combat overhaul pass 2026-09-21: crew COUNT (distinct from
+    // crewEffectiveness, the existing multiplier CommandTrack.crew
+    // already grew) used to be entirely fixed at the hull's own base --
+    // no investment of any kind could ever raise how many bodies a ship
+    // actually carries -- see crewCapacity's own doc comment. crewFraction
+    // below reads the STORED s.maxCrew (the ship's real capacity as of
+    // the PREVIOUS apply() call, exactly mirroring hpFraction reading
+    // s.maxHullHp above) rather than recomputing crewCapacity(s) fresh --
+    // PiratesVoyage.buyTree already bumps the tree level BEFORE calling
+    // apply(), so recomputing "the old capacity" here would read the
+    // SAME already-bumped tree value used for the new capacity below,
+    // making the fraction a no-op and crew count would never actually
+    // grow through real play. See Vessel.maxCrew's own doc comment.
+    final crewFraction = (s.crewCount / s.maxCrew).clamp(0.0, 1.0);
     s.hullType = h.name;
     s.maxHullHp =
         h.hp +
         c.units(CommandTrack.hull) * LifeBalance.hullPerUnit +
         (equippedHull?.bonus ?? 0) * 5;
     s.hullHp = s.maxHullHp * (preserveDamage ? hpFraction : 1);
-    s.crewCount = max(0, (h.crew * crewFraction).round());
+    s.maxCrew = crewCapacity(s);
+    s.crewCount = max(0, (s.maxCrew * crewFraction).round());
     s.speed = h.baseSpeed * (1 + c.percent(CommandTrack.navigation));
     s.firepower =
         h.guns +
@@ -844,20 +926,23 @@ class FleetProgress {
 
   /// A ship's real effective cargo-hold capacity: hull base (fixed per
   /// hull, preserving hull identity -- a Fluyt stays a better cargo ship
-  /// than a Sloop) plus the Fleet Tree's flat +1-per-step bonus (shared
-  /// by every player ship, 0-50 total, see FleetTrack.shipHold), then
-  /// equipment's own percentage bonus (Vessel.holdBonus) on top -- with
-  /// an absolute hard cap of 100 regardless of how those combine (Port
-  /// Relations balance pass 2026-09-20). NPCs (no CommandProgress entry)
-  /// get their unmodified hull base only -- this bonus is explicitly
-  /// fleet-wide for the PLAYER's own ships, never NPCs.
+  /// than a Sloop) plus equipment's own percentage bonus (Vessel.
+  /// holdBonus) -- capped at this hull's own [HullDefinition.cargoCeiling]
+  /// (see Balance.combinedHoldCapacity's own doc comment). Ship/combat
+  /// overhaul clarification pass 2026-09-21: the fleet-wide Ship Hold
+  /// tree term (FleetTrack.shipHold, a flat 0-50 shared identically by
+  /// every ship) is REMOVED -- cargo capacity is now governed entirely
+  /// by hull identity + legitimate equipment, with cargoCeiling as the
+  /// real, per-hull final bound. NPCs (no CommandProgress entry) get
+  /// their unmodified hull base only -- equipment holdBonus is
+  /// explicitly a player-command mechanic, never NPCs.
   int effectiveHoldCapacity(Vessel s) {
-    final base = hullFor(s.hullType).holds;
+    final h = hullFor(s.hullType);
     final c = commands[s.id];
-    if (c == null) return min(100, base);
+    if (c == null) return min(h.cargoCeiling, h.holds);
     return Balance.combinedHoldCapacity(
-      baseHold: base,
-      shipHoldTreeLevel: tree[FleetTrack.shipHold] ?? 0,
+      baseHold: h.holds,
+      cargoCeiling: h.cargoCeiling,
       equipmentBonus: s.holdBonus,
     );
   }
@@ -886,6 +971,15 @@ class FleetProgress {
   /// the pool, each equally likely, rather than the only possible outcome.
   /// Every other category is completely unchanged: [pool] alone decides
   /// the roll, exactly as before this pass.
+  ///
+  /// Ship/combat overhaul pass 2026-09-21: rarity is now rolled BEFORE
+  /// the hull is picked, so a hull with HullDefinition.minRollRarityIndex
+  /// set above 0 (today, only Xebec, gated at Legendary) can be excluded
+  /// from the pool on any roll that didn't land on a high enough rarity
+  /// -- the cleanest existing seam for a genuinely rare/special hull:
+  /// reusing the SAME rarity-roll pipeline every other item already goes
+  /// through (see RollSource.paidRare's own 10% Legendary chance), rather
+  /// than inventing a separate acquisition mechanism.
   EquipmentItem roll(
     ChestKind chest,
     Random rng, {
@@ -900,8 +994,11 @@ class FleetProgress {
     final pick = rng.nextInt(options);
     final definition = includesHullSwap && pick == pool.length ? null : pool[pick];
     final kind = definition?.kind ?? ItemKind.hull;
-    final h = hullCatalog[rng.nextInt(hullCatalog.length)];
     final rarity = _rollRarity(source, rng);
+    final eligibleHulls = hullCatalog
+        .where((h) => rarity.index >= h.minRollRarityIndex)
+        .toList();
+    final h = eligibleHulls[rng.nextInt(eligibleHulls.length)];
     final result = EquipmentItem(
       'item-${nextItem++}',
       kind == ItemKind.hull
@@ -1105,6 +1202,17 @@ class FleetProgress {
     for (final e in (j['tree'] as Map<String, dynamic>).entries) {
       tree[FleetTrack.values.byName(e.key)] = level(e.value);
     }
+    // Ship/combat overhaul clarification pass 2026-09-21: shipHold is
+    // retired (see FleetTrack's own doc comment) -- any level an older
+    // save persisted for it is discarded here, immediately after
+    // parsing, so it can never again influence cargo capacity
+    // (effectiveHoldCapacity no longer reads it at all -- this removal
+    // is purely so a stale, now-meaningless number doesn't linger in
+    // memory or get written back out by the next save) and the player
+    // is never shown a "Ship Hold" row to spend further coins on. No
+    // FormatException, no coin refund -- this is a silent, safe
+    // retirement, matching how portFavor was retired before it.
+    tree.remove(FleetTrack.shipHold);
     for (final id in j['lastRewards'] as List) {
       if (item(id) == null) throw const FormatException('Missing reward');
       lastRewards.add(id);

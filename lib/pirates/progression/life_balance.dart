@@ -71,7 +71,21 @@ abstract final class LifeBalance {
     return (1 + total + l * l ~/ 100) * c * c * c;
   }
 
-  static const hullPerUnit = .1, firePerUnit = .02;
+  // Ship/combat overhaul pass 2026-09-21: firePerUnit raised .02 -> .1 --
+  // live playtesting reported Firepower advancing by a barely-visible
+  // +0.01-ish per level; the intended increment is a full +0.1 per
+  // reward-unit (matching hullPerUnit's own established scale), growing
+  // across the full 1100-level Command Tree exactly like every other
+  // per-unit stat. This is the single source of truth CommandProgress.
+  // nextBenefit's UI text and FleetProgress.apply's real calculation both
+  // already read from -- no other stale increment exists elsewhere (see
+  // this pass's own removal of the unused, unrelated Balance.firePerLevel
+  // dead-code block in fleet_progress.dart).
+  //
+  // crewCountPerUnit (new this pass): grows a ship's real crew COUNT the
+  // same way hullPerUnit/firePerUnit already grow HP/firepower, capped
+  // per-hull at HullDefinition.crewCeiling -- see FleetProgress.apply.
+  static const hullPerUnit = .1, firePerUnit = .1, crewCountPerUnit = .008;
   static const serviceCapacity = 10, cargoPortCapacity = 10;
   static const repairPrice = 1.0, crewPrice = 1.0, secondsPerUnit = .5;
   static const minimumServiceStage = .75, specialistServiceReduction = .10;
@@ -137,6 +151,28 @@ abstract final class LifeBalance {
   static const minRosterForPopulationFloors = 10;
   static const pirateRespawn = 60.0, playerRespawn = 5.0;
   static const hunterThresholds = [4, 8], hunterRetire = 2, merchantAttacks = 2;
-  static const roleWeights = [.50, .10, .05, .35];
+  // Ship/combat overhaul pass 2026-09-21 (pirate/hunter ecosystem
+  // damping): the minimum time between successive hunter RECRUITMENT
+  // decisions (retirement is unthrottled -- see WorldLife.tick's own
+  // doc comment on hunterSpawnCooldown for why the spawn side needed the
+  // fix, not the retire side, which already has a real hysteresis gap
+  // via hunterThresholds vs hunterRetire).
+  static const hunterSpawnCooldownSeconds = 60.0;
+  // Encounter/ship-selection balance pass 2026-09-21: [roleWeights] used
+  // to be [.50, .10, .05, .35] (merchant/pirate/explorer/privateer,
+  // matching BehaviorMode's own enum order) -- a flat 35% of ALL ambient
+  // NPC arrivals being Privateer (SECOND only to Merchant, well above
+  // Pirate itself at 10%) directly caused the reported "Man-of-War feels
+  // like normal traffic" complaint: Privateer's own hull pool
+  // (Frigate/Brig/Man-of-War, see WorldLife.spawn) drew uniformly, so
+  // roughly 35%/3 =~ 11.7% of the ENTIRE ambient world population was
+  // Man-of-War-class. Rebalanced toward "lots of plausible prey, some
+  // tougher targets, an occasional OH FUCK ship" -- Merchant stays
+  // dominant (comparable prey for Pirate play), Pirate/Explorer both
+  // rise slightly (a healthier baseline pirate population for
+  // hunters to actually respond to), Privateer drops to nearly half its
+  // old weight. Man-of-War's OWN rarity within the privateer pool is a
+  // separate, second fix -- see WorldLife.spawn's privateerHullWeights.
+  static const roleWeights = [.55, .15, .10, .20];
   static const logLimit = 12;
 }
