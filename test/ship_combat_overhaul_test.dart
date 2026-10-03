@@ -217,9 +217,10 @@ void main() {
       expect(xebec.guns, lessThanOrEqualTo(frigate.guns), reason: 'dangerous, but not simply the best gunned ship too');
     });
 
-    test('a Common/Paid-Common Hull Chest roll can never produce Xebec -- their rarity tables have no Legendary entry at all', () {
+    test('a Common/Paid-Common Hull Chest roll can never produce Xebec -- Xebec is not a key in either hull table at all (balance lock 2026-10-03)', () {
+      expect(hullTableAdCommonBp.containsKey('Xebec'), isFalse);
+      expect(hullTablePaidCommonBp.containsKey('Xebec'), isFalse);
       for (final source in [RollSource.adCommon, RollSource.paidCommon]) {
-        expect(rollRarityWeights[source]!.containsKey(Rarity.legendary), isFalse);
         final ship = _vessel('p', owned: true);
         final progress = FleetProgress([ship]);
         for (var seed = 0; seed < 300; seed++) {
@@ -231,14 +232,26 @@ void main() {
       }
     });
 
-    test('a genuine Legendary Xebec is reachable through the existing Rare Chest roll pipeline (known seed 445)', () {
+    test('a genuine Legendary Xebec is reachable through the Rare Chest roll pipeline, and is ALWAYS Legendary (finalized balance lock 2026-10-03: narrow Xebec rarity-override rule)', () {
+      expect(hullTableRareBp.containsKey('Xebec'), isTrue);
       final ship = _vessel('p', owned: true);
       final progress = FleetProgress([ship]);
-      final item = progress.roll(ChestKind.rare, Random(445), category: ChestCategory.hull, source: RollSource.paidRare);
-      expect(item.kind, ItemKind.hull);
-      expect(item.hullType, 'Xebec');
-      expect(item.rarity, Rarity.legendary);
-      expect(item.name, 'Legendary Xebec');
+      var foundXebec = false;
+      for (var seed = 0; seed < 2000 && !foundXebec; seed++) {
+        final item = progress.roll(ChestKind.rare, Random(seed), category: ChestCategory.hull, source: RollSource.paidRare);
+        if (item.kind == ItemKind.hull && item.hullType == 'Xebec') {
+          foundXebec = true;
+          // Finalized balance lock 2026-10-03: Xebec is the game's only
+          // current Legendary hull, so a Xebec pull always overrides the
+          // independently-rolled rarity to Legendary -- 'Fine Xebec'/
+          // 'Masterwork Xebec' must never occur (see roll()'s own doc
+          // comment for why this is a narrow override, not a return to
+          // rarity-first/rarity-gated hull eligibility).
+          expect(item.name, 'Legendary Xebec');
+          expect(item.rarity, Rarity.legendary);
+        }
+      }
+      expect(foundXebec, isTrue, reason: 'Xebec is reachable within a reasonable number of Rare Chest rolls under its 100bp (1%) table weight');
     });
   });
 

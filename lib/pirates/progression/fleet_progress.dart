@@ -3,6 +3,7 @@ import 'dart:math';
 import '../../core/simulation/vessel.dart';
 import '../ships/hull_catalog.dart';
 part 'equipment_content.dart';
+part 'hull_reward_tables.dart';
 
 enum CommandTrack { hull, firepower, crew, navigation, portRelations }
 
@@ -963,49 +964,78 @@ class FleetProgress {
     return weights.keys.last;
   }
 
-  /// Live playtest repair pass 2026-09-20: ChestCategory.hull's pool now
-  /// spans the whole Hull Upgrade family (see ChestCategoryContent.accepts)
-  /// -- a genuine ship-hull swap (no equipmentContent entry; drawn from
-  /// hullCatalog, same as before) is treated as one more roll OPTION
-  /// alongside every cannon/rigging/reinforcement/figurehead definition in
-  /// the pool, each equally likely, rather than the only possible outcome.
-  /// Every other category is completely unchanged: [pool] alone decides
-  /// the roll, exactly as before this pass.
+  /// Balance design lock 2026-10-03: ChestCategory.hull's reward is no
+  /// longer "uniformly pick among pool.length equipment items + 1 hull
+  /// slot" (the pre-2026-10-03 scheme -- see git history for the exact
+  /// prior implementation this replaced). That made the Hull swap's own
+  /// odds `1 / (pool.length + 1)`: silently different every time an
+  /// equipment item was added or removed, and WHICH hull came out was an
+  /// indirect side effect of an independent rarity roll gating
+  /// hullCatalog by minRollRarityIndex.
   ///
-  /// Ship/combat overhaul pass 2026-09-21: rarity is now rolled BEFORE
-  /// the hull is picked, so a hull with HullDefinition.minRollRarityIndex
-  /// set above 0 (today, only Xebec, gated at Legendary) can be excluded
-  /// from the pool on any roll that didn't land on a high enough rarity
-  /// -- the cleanest existing seam for a genuinely rare/special hull:
-  /// reusing the SAME rarity-roll pipeline every other item already goes
-  /// through (see RollSource.paidRare's own 10% Legendary chance), rather
-  /// than inventing a separate acquisition mechanism.
+  /// Hull is now an explicit, flat, pool-size-INDEPENDENT 6% category
+  /// chance (`hullChestCategoryWeightsBp` in hull_reward_tables.dart),
+  /// rolled BEFORE anything about equipmentContent is even looked at.
+  /// The other four Hull Upgrade family members (cannon/rigging/
+  /// reinforcement/figurehead) now each have their own explicit category
+  /// weight too -- a faithful translation of the OLD pool.length-derived
+  /// odds, not a new balance decision (see that same file's doc comment).
+  /// If the roll lands on `hull`, WHICH hull comes out is decided by one
+  /// of three independent, directly-tunable per-RollSource tables
+  /// (hullTableAdCommonBp/hullTablePaidCommonBp/hullTableRareBp) instead
+  /// of the old rarity-gate-then-uniform-pick mechanism. Xebec is simply
+  /// absent as a key from the first two tables -- there is no
+  /// reroll/exclusion check for it anywhere below; it cannot be drawn
+  /// from a map it is not in.
+  ///
+  /// Every OTHER ChestCategory (equipment/crew/officers) is completely
+  /// untouched: still a flat uniform pick over [pool], exactly as before
+  /// this pass -- this rework is scoped to Hull Chests only.
   EquipmentItem roll(
     ChestKind chest,
     Random rng, {
     required ChestCategory category,
     required RollSource source,
   }) {
-    final pool = equipmentContent
-        .where((d) => category.accepts(d.kind))
-        .toList();
-    final includesHullSwap = category == ChestCategory.hull;
-    final options = pool.length + (includesHullSwap ? 1 : 0);
-    final pick = rng.nextInt(options);
-    final definition = includesHullSwap && pick == pool.length ? null : pool[pick];
-    final kind = definition?.kind ?? ItemKind.hull;
-    final rarity = _rollRarity(source, rng);
-    final eligibleHulls = hullCatalog
-        .where((h) => rarity.index >= h.minRollRarityIndex)
-        .toList();
-    final h = eligibleHulls[rng.nextInt(eligibleHulls.length)];
+    EquipmentDefinition? definition;
+    HullDefinition? rolledHull;
+    final ItemKind kind;
+    if (category == ChestCategory.hull) {
+      final rewardCategory = pickWeighted(hullChestCategoryWeightsBp, rng);
+      final subKind = rewardCategory.itemKind;
+      if (subKind == null) {
+        kind = ItemKind.hull;
+        rolledHull = hullFor(pickWeighted(hullTableBpFor(source), rng));
+      } else {
+        final pool = equipmentContent.where((d) => d.kind == subKind).toList();
+        definition = pool[rng.nextInt(pool.length)];
+        kind = subKind;
+      }
+    } else {
+      final pool = equipmentContent
+          .where((d) => category.accepts(d.kind))
+          .toList();
+      definition = pool[rng.nextInt(pool.length)];
+      kind = definition.kind;
+    }
+    var rarity = _rollRarity(source, rng);
+    // Narrow Legendary-hull rule (balance lock 2026-10-03, finalized hull
+    // tables): Xebec is the game's only current Legendary hull, and a
+    // Xebec pull must always actually read "Legendary Xebec" -- "Fine
+    // Xebec"/"Masterwork Xebec" must never occur. This overrides the
+    // independently-rolled rarity ONLY when the hull-TABLE roll above
+    // already selected Xebec (hullTableRareBp's own 100bp weight is
+    // still what decides whether Xebec is picked at all -- this does
+    // NOT restore rarity-first/rarity-gated hull eligibility). Every
+    // other hull's rarity is completely unaffected by this check.
+    if (rolledHull?.name == 'Xebec') rarity = Rarity.legendary;
     final result = EquipmentItem(
       'item-${nextItem++}',
       kind == ItemKind.hull
-          ? '${rarity.namePrefix} ${h.name}'
+          ? '${rarity.namePrefix} ${rolledHull!.name}'
           : '${rarity.namePrefix} ${definition!.name}',
       kind,
-      hullType: kind == ItemKind.hull ? h.name : null,
+      hullType: kind == ItemKind.hull ? rolledHull!.name : null,
       rarity: rarity,
       bonus: definition == null ? (1 + rarity.index).toDouble() : 0.0,
       contentId: definition?.id,
