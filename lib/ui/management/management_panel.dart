@@ -15,6 +15,17 @@ import 'remove_ads_tile.dart';
 
 const managementLabels = ['Shop', 'Tree', 'Upgrades', 'Deck', 'Settings'];
 
+/// Release gate (1.0.3+13): Remove Ads is not a launch product for this
+/// release -- hides only the Settings-tab purchase row so it can't be
+/// bought or even seen. Does NOT touch BillingService.buyRemoveAds,
+/// MonetizationIds.removeAdsProductId, or MonetizationStore.hasRemoveAds
+/// -- ad suppression for anyone who already owns the entitlement from an
+/// earlier release is read directly from hasRemoveAds in
+/// command_screen.dart, entirely independent of this row, and keeps
+/// working correctly either way. Flip back to true to re-expose the row
+/// in a future release.
+const removeAdsPurchaseVisibleInShop = false;
+
 class ManagementPanel extends StatelessWidget {
   final PiratesVoyage? voyage;
   final VoidCallback? onChanged;
@@ -237,7 +248,8 @@ class ManagementPanel extends StatelessWidget {
           saveError ??
               'Saved every five seconds. Current offline cap: ${voyage?.progress.offlineCapLabel ?? '4h 0m'}. Battles do not simulate offline.',
         ),
-        if (billing != null) RemoveAdsTile(billing: billing!, owned: hasRemoveAds),
+        if (removeAdsPurchaseVisibleInShop && billing != null)
+          RemoveAdsTile(billing: billing!, owned: hasRemoveAds),
         note(
           Icons.info_outline,
           'Dot Commander: Pirates',
