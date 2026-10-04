@@ -71,7 +71,85 @@ abstract final class MonetizationIds {
   /// products with this exact ID, a one-time (non-consumable) purchase,
   /// priced at $2.99 (or the local-currency equivalent Play computes).
   static const removeAdsProductId = 'remove_ads';
-  static const removeAdsFallbackPriceLabel = '\$2.99';
+
+  // -------------------------------------------------------------------
+  // Gem purchases (monetization update pass 2026-09-27)
+  // -------------------------------------------------------------------
+  //
+  // Three CONSUMABLE Play Console in-app products. Must be created in
+  // Play Console > Monetize > Products > In-app products with these exact
+  // IDs, each as a consumable (not a subscription, not managed as a
+  // one-time entitlement). See BillingService for the purchase/consume
+  // flow and MonetizationStore for the crash-safe credit ledger -- both
+  // are what actually make "consumable" safe here, not Play Console
+  // configuration alone.
+  //
+  // Target US base prices ($0.95 / $4.95 / $9.95) are configured in Play
+  // Console directly; this file only ever reads back whatever localized
+  // price Play Billing returns via ProductDetails.price (see
+  // BillingService.gemPriceLabel). Nothing here hardcodes a currency
+  // string into the purchase UI, and there is deliberately no fallback
+  // price label of any kind (BILLING AUDIT FIX 2026-09-27: a prior
+  // version showed a hardcoded fallback price on the Buy button before
+  // ProductDetails had loaded, which let a product that was actually
+  // unavailable/unresolved -- not yet created in Play Console, offline
+  // at startup, store unreachable -- still LOOK purchasable with a fake
+  // price. The UI now shows "Unavailable" and disables the button
+  // instead whenever the real product hasn't resolved -- see
+  // gem_purchase_dialog.dart/coin_purchase_dialog.dart/remove_ads_tile.dart).
+  static const gems100ProductId = 'gems_100';
+  static const gems520ProductId = 'gems_520';
+  static const gems1050ProductId = 'gems_1050';
+
+  static const gemProducts = [
+    GemProductInfo(productId: gems100ProductId, baseGems: 100, bonusGems: 0),
+    GemProductInfo(productId: gems520ProductId, baseGems: 500, bonusGems: 20),
+    GemProductInfo(productId: gems1050ProductId, baseGems: 1000, bonusGems: 50),
+  ];
+
+  static const Set<String> gemProductIds = {
+    gems100ProductId,
+    gems520ProductId,
+    gems1050ProductId,
+  };
+
+  /// The [GemProductInfo] backing [productId], or null if it isn't one of
+  /// [gemProducts] (e.g. it's [removeAdsProductId], or an unrecognized id
+  /// from a stray purchase-stream delivery).
+  static GemProductInfo? gemProductFor(String productId) {
+    for (final p in gemProducts) {
+      if (p.productId == productId) return p;
+    }
+    return null;
+  }
+
+  // -------------------------------------------------------------------
+  // Coin purchase (monetization update pass 2026-09-27)
+  // -------------------------------------------------------------------
+  //
+  // One CONSUMABLE Play Console in-app product, same shape/safety story
+  // as the gem packs above (see BillingService/MonetizationStore). Target
+  // US base price $0.95, configured in Play Console directly -- no
+  // fallback price label here either, see gemProducts' own doc comment.
+  static const coins5000ProductId = 'coins_5000';
+  static const coins5000Amount = 5000;
+}
+
+/// One purchasable gem pack. [baseGems] + [bonusGems] is the total amount
+/// actually credited; the split exists only so the UI can show the bonus
+/// separately (e.g. "500 + 20 BONUS") -- BillingService always credits
+/// [totalGems] as a single amount, never the two parts separately.
+class GemProductInfo {
+  final String productId;
+  final int baseGems;
+  final int bonusGems;
+  const GemProductInfo({
+    required this.productId,
+    required this.baseGems,
+    required this.bonusGems,
+  });
+
+  int get totalGems => baseGems + bonusGems;
 }
 
 /// Which of Dot Commander's three real rewarded ad units backs a Common

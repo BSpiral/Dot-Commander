@@ -1,3 +1,4 @@
+import '../../monetization/billing_service.dart';
 import '../../monetization/monetization_ids.dart';
 import '../../monetization/rewarded_chest_service.dart';
 import '../../pirates/progression/life_balance.dart';
@@ -5,6 +6,8 @@ import 'package:flutter/material.dart';
 import '../../pirates/progression/fleet_progress.dart';
 import '../../pirates/encounters/pirates_voyage.dart';
 import '../../core/simulation/vessel.dart';
+import 'coin_purchase_dialog.dart';
+import 'gem_purchase_dialog.dart';
 import 'rewarded_chest_tile.dart';
 import 'upgrades_panel.dart';
 
@@ -15,6 +18,7 @@ class ProgressionPanel extends StatelessWidget {
   final VoidCallback changed;
   final RewardedChestService? rewardedChests;
   final Future<void> Function(RewardedAdGroup group)? onRewardedChestGranted;
+  final BillingService? billing;
   const ProgressionPanel({
     super.key,
     required this.voyage,
@@ -23,6 +27,7 @@ class ProgressionPanel extends StatelessWidget {
     required this.changed,
     this.rewardedChests,
     this.onRewardedChestGranted,
+    this.billing,
   });
   @override
   Widget build(BuildContext context) {
@@ -61,11 +66,24 @@ class ProgressionPanel extends StatelessWidget {
           'Command berths: $n / 5',
           'New identity, zero Tree, basic Sloop',
           n == 5 ? 'Full' : '${Balance.slotCosts[n]} coins',
-          n < 5 && voyage.coins >= Balance.slotCosts[n]
-              ? () => action(() {
-                  voyage.purchaseSlot();
-                })
-              : null,
+          n == 5
+              ? null
+              : () {
+                  final cost = Balance.slotCosts[n];
+                  if (voyage.coins < cost) {
+                    final billingService = billing;
+                    if (billingService != null) {
+                      showNotEnoughCoinsDialog(
+                        context,
+                        need: cost - voyage.coins,
+                        billing: billingService,
+                        voyage: voyage,
+                      );
+                    }
+                    return;
+                  }
+                  action(() => voyage.purchaseSlot());
+                },
           key: const Key('buy_slot'),
         ),
       );
@@ -82,25 +100,39 @@ class ProgressionPanel extends StatelessWidget {
       for (final category in ChestCategory.values) {
         if (category == ChestCategory.equipment) continue;
         for (final kind in ChestKind.values) {
+          final cost = Balance.chestCosts[kind]!;
+          final affordable = voyage.gems >= cost;
           widgets.add(
             row(
               '${kind.name == 'common' ? 'Common' : 'Rare'} ${category.label} Chest',
               '${category.label} only. Duplicate copies stack and auto-upgrade (5 -> next rarity, up to Rare).',
-              '${Balance.chestCosts[kind]} gems',
-              voyage.gems >= Balance.chestCosts[kind]!
-                  ? () => action(() {
-                      final reward = voyage.openChest(kind, category: category);
-                      if (reward != null) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(
-                              'Received ${reward.name} (${reward.rarity.label})',
-                            ),
-                          ),
-                        );
-                      }
-                    })
-                  : null,
+              '$cost gems',
+              () {
+                if (!affordable) {
+                  final billingService = billing;
+                  if (billingService != null) {
+                    showNotEnoughGemsDialog(
+                      context,
+                      need: cost - voyage.gems,
+                      billing: billingService,
+                      voyage: voyage,
+                    );
+                  }
+                  return;
+                }
+                action(() {
+                  final reward = voyage.openChest(kind, category: category);
+                  if (reward != null) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          'Received ${reward.name} (${reward.rarity.label})',
+                        ),
+                      ),
+                    );
+                  }
+                });
+              },
               key: Key('chest_${category.name}_${kind.name}'),
             ),
           );
@@ -159,18 +191,30 @@ class ProgressionPanel extends StatelessWidget {
         ];
         for (final t in CommandTrack.values) {
           final level = c.level(t), cost = LifeBalance.cost(c.level(t));
+          final maxed = level == LifeBalance.maxLevels;
+          final busy = voyage.busy(ship.id);
           widgets.add(
             row(
               '${labels[t.index]} ${c.label(t)}',
               c.nextBenefit(t),
-              level == LifeBalance.maxLevels ? 'MAXED' : '$cost coins',
-              level < LifeBalance.maxLevels &&
-                      voyage.coins >= cost &&
-                      !voyage.busy(ship.id)
-                  ? () => action(() {
-                      voyage.buyTree(ship.id, t);
-                    })
-                  : null,
+              maxed ? 'MAXED' : '$cost coins',
+              maxed || busy
+                  ? null
+                  : () {
+                      if (voyage.coins < cost) {
+                        final billingService = billing;
+                        if (billingService != null) {
+                          showNotEnoughCoinsDialog(
+                            context,
+                            need: cost - voyage.coins,
+                            billing: billingService,
+                            voyage: voyage,
+                          );
+                        }
+                        return;
+                      }
+                      action(() => voyage.buyTree(ship.id, t));
+                    },
               key: Key('tree_${t.name}'),
             ),
           );
@@ -212,11 +256,23 @@ class ProgressionPanel extends StatelessWidget {
             '$title $level / 1000',
             detail,
             level == 1000 ? 'MAXED' : '$cost coins',
-            level < 1000 && voyage.coins >= cost
-                ? () => action(() {
-                    voyage.buyFleetTree(t);
-                  })
-                : null,
+            level == 1000
+                ? null
+                : () {
+                    if (voyage.coins < cost) {
+                      final billingService = billing;
+                      if (billingService != null) {
+                        showNotEnoughCoinsDialog(
+                          context,
+                          need: cost - voyage.coins,
+                          billing: billingService,
+                          voyage: voyage,
+                        );
+                      }
+                      return;
+                    }
+                    action(() => voyage.buyFleetTree(t));
+                  },
             key: Key('fleet_tree_${t.name}'),
           ),
         );
