@@ -7,6 +7,7 @@ import '../../pirates/progression/fleet_progress.dart';
 import '../../pirates/encounters/pirates_voyage.dart';
 import '../../core/simulation/vessel.dart';
 import 'coin_purchase_dialog.dart';
+import 'gem_pack_tile.dart';
 import 'gem_purchase_dialog.dart';
 import 'rewarded_chest_tile.dart';
 import 'upgrades_panel.dart';
@@ -60,6 +61,20 @@ class ProgressionPanel extends StatelessWidget {
     );
     final widgets = <Widget>[];
     if (tab == 0) {
+      // Shop reorder pass 2026-10-03: the three real-money Gem packs are
+      // now the first three entries in the entire Shop, full stop --
+      // placed before Command berths or any chest row. Previously these
+      // were only reachable via the "Buy Gems" modal opened from the top
+      // status bar (command_screen.dart) -- that entry point is kept
+      // (per explicit instruction), this is an ADDITIONAL, earlier way
+      // in, reusing the exact same BillingService calls (see
+      // GemPackTile), not new purchase logic.
+      final billingService = billing;
+      if (billingService != null) {
+        for (final product in MonetizationIds.gemProducts) {
+          widgets.add(GemPackTile(billing: billingService, product: product));
+        }
+      }
       final n = p.commands.length;
       widgets.add(
         row(
@@ -71,7 +86,6 @@ class ProgressionPanel extends StatelessWidget {
               : () {
                   final cost = Balance.slotCosts[n];
                   if (voyage.coins < cost) {
-                    final billingService = billing;
                     if (billingService != null) {
                       showNotEnoughCoinsDialog(
                         context,
@@ -96,9 +110,31 @@ class ProgressionPanel extends StatelessWidget {
       // only the Shop's two gem-purchase ROWS; the enum value, openChest,
       // and equipment already owned/dropped elsewhere are all untouched
       // -- ChestCategory.crew ("Crew Equipment") and ChestCategory.hull/
-      // officers keep their own rows exactly as before.
+      // officers keep their own rows exactly as before. Category order
+      // (hull, crew, officers) is the EXISTING ChestCategory.values
+      // order, preserved exactly as it already was.
+      //
+      // Shop reorder pass 2026-10-03: within each category, rows are now
+      // grouped together as Watch Ad -> 10-Gem Common -> 50-Gem Rare
+      // (previously every category's gem rows rendered first as one
+      // block, with ALL watch-ad rows grouped separately at the very
+      // end) -- same three existing rows per category, just interleaved
+      // instead of split into two blocks. No category/kind/ad-group was
+      // added, removed, renamed, or duplicated.
       for (final category in ChestCategory.values) {
         if (category == ChestCategory.equipment) continue;
+        final adGroup = rewardedAdGroupFor(category);
+        if (adGroup != null &&
+            rewardedChests != null &&
+            onRewardedChestGranted != null) {
+          widgets.add(
+            RewardedChestTile(
+              service: rewardedChests!,
+              group: adGroup,
+              onGranted: onRewardedChestGranted!,
+            ),
+          );
+        }
         for (final kind in ChestKind.values) {
           final cost = Balance.chestCosts[kind]!;
           final affordable = voyage.gems >= cost;
@@ -109,7 +145,6 @@ class ProgressionPanel extends StatelessWidget {
               '$cost gems',
               () {
                 if (!affordable) {
-                  final billingService = billing;
                   if (billingService != null) {
                     showNotEnoughGemsDialog(
                       context,
@@ -134,21 +169,6 @@ class ProgressionPanel extends StatelessWidget {
                 });
               },
               key: Key('chest_${category.name}_${kind.name}'),
-            ),
-          );
-        }
-      }
-      // Rewarded-ad rows: exactly 3 (one per real ad unit -- see
-      // RewardedAdGroup). The Gold reward that used to live here
-      // (Saturday repair pass 2026-09-20) is now the map's money ship
-      // instead -- see PiratesVoyage.claimMoneyShip.
-      if (rewardedChests != null && onRewardedChestGranted != null) {
-        for (final group in RewardedAdGroup.values) {
-          widgets.add(
-            RewardedChestTile(
-              service: rewardedChests!,
-              group: group,
-              onGranted: onRewardedChestGranted!,
             ),
           );
         }

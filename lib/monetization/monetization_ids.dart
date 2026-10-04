@@ -97,20 +97,24 @@ abstract final class MonetizationIds {
   // price. The UI now shows "Unavailable" and disables the button
   // instead whenever the real product hasn't resolved -- see
   // gem_purchase_dialog.dart/coin_purchase_dialog.dart/remove_ads_tile.dart).
+  // Launch product set (Shop reorder pass 2026-10-03): exactly these
+  // three IDs/amounts, no bonus split -- superseded the earlier
+  // gems_520 (500+20 bonus)/gems_1050 (1000+50 bonus) provisional
+  // values, which were never the intended launch amounts.
   static const gems100ProductId = 'gems_100';
-  static const gems520ProductId = 'gems_520';
-  static const gems1050ProductId = 'gems_1050';
+  static const gems550ProductId = 'gems_550';
+  static const gems1200ProductId = 'gems_1200';
 
   static const gemProducts = [
     GemProductInfo(productId: gems100ProductId, baseGems: 100, bonusGems: 0),
-    GemProductInfo(productId: gems520ProductId, baseGems: 500, bonusGems: 20),
-    GemProductInfo(productId: gems1050ProductId, baseGems: 1000, bonusGems: 50),
+    GemProductInfo(productId: gems550ProductId, baseGems: 550, bonusGems: 0),
+    GemProductInfo(productId: gems1200ProductId, baseGems: 1200, bonusGems: 0),
   ];
 
   static const Set<String> gemProductIds = {
     gems100ProductId,
-    gems520ProductId,
-    gems1050ProductId,
+    gems550ProductId,
+    gems1200ProductId,
   };
 
   /// The [GemProductInfo] backing [productId], or null if it isn't one of
@@ -207,4 +211,18 @@ extension RewardedAdGroupLabel on RewardedAdGroup {
     RewardedAdGroup.crewEquipment => const [ChestCategory.crew],
     RewardedAdGroup.officersCommon => const [ChestCategory.officers],
   };
+}
+
+/// The reverse of [RewardedAdGroupLabel.chestCategories] -- Shop reorder
+/// pass 2026-10-03, needed so the Shop can render each chest category's
+/// own "Watch Ad" row immediately next to that SAME category's gem rows
+/// (Ad Common -> 10-Gem Common -> 50-Gem Rare, grouped per category)
+/// instead of all ad rows being grouped separately at the end. Returns
+/// null for a category with no rewarded-ad route at all (today, that's
+/// [ChestCategory.equipment], which has no Shop rows of any kind).
+RewardedAdGroup? rewardedAdGroupFor(ChestCategory category) {
+  for (final group in RewardedAdGroup.values) {
+    if (group.chestCategories.contains(category)) return group;
+  }
+  return null;
 }
